@@ -1,0 +1,6 @@
+id=komodo-android-periphery
+name=Komodo Android Periphery
+version=0.1.0
+versionCode=1
+author=ABHIMANYU993
+description=Native Komodo Periphery daemon for Android (Root/Magisk)

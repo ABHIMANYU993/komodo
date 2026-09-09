@@ -280,7 +280,7 @@ impl CoreConnectionLoop {
                     public_key: public_key_str,
                     terminals_disabled: false,
                     container_terminals_disabled: true,
-                    stats_polling_rate: "1s".to_string(),
+                    stats_polling_rate: "5-sec".to_string(),
                     docker_connected: false,
                     public_ip: None,
                 };
@@ -322,17 +322,22 @@ impl CoreConnectionLoop {
             }
             PeripheryRequest::CreateServerTerminal { name, command, recreate: _ } => {
                 match terminal_mgr.create_terminal(name, command).await {
-                    Ok((session_id, mut stdout_rx)) => {
-                        let now_epoch = std::time::SystemTime::now()
+                    Ok((session_id, term_name, mut stdout_rx)) => {
+                        let now_epoch_ms = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_secs())
+                            .map(|d| d.as_millis() as i64)
                             .unwrap_or(0);
 
                         let term_entity = serde_json::json!({
-                            "id": session_id,
-                            "name": format!("term-{}", &session_id.to_string()[..8]),
+                            "name": term_name,
+                            "target": {
+                                "type": "Server",
+                                "params": { "server": null }
+                            },
+                            "target_name": null,
                             "command": "/system/bin/sh",
-                            "created_at": now_epoch.to_string(),
+                            "stored_size_kb": 0.0,
+                            "created_at": now_epoch_ms,
                         });
 
                         if let Ok(frame) = PeripheryResponse::ok(channel, &term_entity) {
@@ -361,13 +366,11 @@ impl CoreConnectionLoop {
                 }
             }
             PeripheryRequest::ConnectTerminal { terminal, target: _ } => {
-                if let Ok(session_id) = Uuid::parse_str(&terminal) {
-                    terminal_mgr.connect_channel(channel, session_id).await;
-                    if let Ok(frame) = PeripheryResponse::ok(channel, &session_id) {
-                        let _ = tx.send(frame).await;
-                    }
-                } else {
-                    let frame = PeripheryResponse::err(channel, "Invalid terminal UUID");
+                let forwarding_channel = Uuid::new_v4();
+                let (session_id, _) = terminal_mgr.get_or_create(&terminal, None).await;
+                terminal_mgr.connect_channel(forwarding_channel, session_id).await;
+
+                if let Ok(frame) = PeripheryResponse::ok(channel, &forwarding_channel) {
                     let _ = tx.send(frame).await;
                 }
             }
@@ -388,12 +391,62 @@ impl CoreConnectionLoop {
                 let frame = PeripheryResponse::ok(channel, &empty).unwrap();
                 let _ = tx.send(frame).await;
             }
+            PeripheryRequest::ExecuteTerminal { terminal: _, target: _, command } => {
+                let channel_id = Uuid::new_v4();
+                if let Ok(frame) = PeripheryResponse::ok(channel, &channel_id) {
+                    let _ = tx.send(frame).await;
+                }
+
+                let tx_stream = tx.clone();
+                tokio::spawn(async move {
+                    use tokio::io::AsyncReadExt;
+                    use tokio::process::Command;
+
+                    let full_command = format!(
+                        "printf '\\n__KOMODO_START_OF_OUTPUT__\\n\\n'; {command}; rc=$?; printf '\\n__KOMODO_EXIT_CODE:%d\\n__KOMODO_END_OF_OUTPUT__\\n' \"$rc\"\n"
+                    );
+
+                    let mut child = match Command::new("/system/bin/sh")
+                        .arg("-c")
+                        .arg(&full_command)
+                        .stdout(std::process::Stdio::piped())
+                        .stderr(std::process::Stdio::piped())
+                        .spawn()
+                    {
+                        Ok(c) => c,
+                        Err(e) => {
+                            let err_msg = format!("Failed to spawn shell: {e}\n__KOMODO_EXIT_CODE:1\n__KOMODO_END_OF_OUTPUT__\n");
+                            let terminal_frame = RawTransportMessage::Terminal {
+                                channel: channel_id,
+                                status: ResponseStatus::Ok,
+                                payload: err_msg.into_bytes(),
+                            };
+                            let _ = tx_stream.send(terminal_frame.encode()).await;
+                            return;
+                        }
+                    };
+
+                    if let Some(mut stdout) = child.stdout.take() {
+                        let mut buf = [0u8; 1024];
+                        while let Ok(n) = stdout.read(&mut buf).await {
+                            if n == 0 {
+                                break;
+                            }
+                            let terminal_frame = RawTransportMessage::Terminal {
+                                channel: channel_id,
+                                status: ResponseStatus::Ok,
+                                payload: buf[..n].to_vec(),
+                            };
+                            if tx_stream.send(terminal_frame.encode()).await.is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    let _ = child.wait().await;
+                });
+            }
             PeripheryRequest::Unsupported(op) => {
                 let frame = PeripheryResponse::err(channel, &format!("Operation '{op}' is not supported on Android Periphery"));
-                let _ = tx.send(frame).await;
-            }
-            _ => {
-                let frame = PeripheryResponse::err(channel, "Unsupported operation");
                 let _ = tx.send(frame).await;
             }
         }

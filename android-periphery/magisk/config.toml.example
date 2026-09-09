@@ -1,0 +1,24 @@
+# ==============================================================================
+# Komodo Android Periphery Configuration
+# Location: /data/adb/komodo/config.toml
+# ==============================================================================
+
+# Core URL: Specify plain WebSocket (ws://) or TLS WebSocket (wss://)
+# The Android agent does NOT assume TLS; it respects whatever the deployment specifies.
+# Example: "ws://192.168.1.100:9120" or "wss://komodo.example.com"
+core_url = "ws://192.168.31.80:9120"
+
+# Connection Mode:
+# - "onboarding": Use for new, unconfigured servers. Requires `onboarding_key`.
+# - "registered": Use for previously onboarded/registered servers.
+connect_as = "onboarding"
+
+# Onboarding Key: Obtained from Komodo Web UI -> Servers -> Add Server -> Onboard
+# Leave empty if connect_as = "registered"
+onboarding_key = ""
+
+# Logging level: "trace", "debug", "info", "warn", "error"
+log_level = "info"
+
+# Directory where persistent X25519 node identity keys are stored
+keys_dir = "/data/adb/komodo/keys"

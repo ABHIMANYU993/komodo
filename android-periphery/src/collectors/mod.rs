@@ -36,8 +36,16 @@ pub struct TelemetryEngine {
 
 impl TelemetryEngine {
     pub fn new() -> Self {
+        let mut initial = TelemetrySnapshot::default();
+        initial.stats.disks = StorageCollector::collect();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        initial.stats.refresh_list_ts = now_ms;
+        initial.stats.refresh_ts = now_ms;
         Self {
-            cache: Arc::new(RwLock::new(TelemetrySnapshot::default())),
+            cache: Arc::new(RwLock::new(initial)),
         }
     }
 
@@ -77,17 +85,26 @@ impl TelemetryEngine {
 
                 // Update cache
                 {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    let total_ingress: f64 = network_usages.iter().map(|u| u.ingress_bytes).sum();
+                    let total_egress: f64 = network_usages.iter().map(|u| u.egress_bytes).sum();
+
                     let mut lock = cache.write().await;
                     lock.stats.cpu_perc = cpu_metrics.total_percentage;
-                    lock.stats.cpus = cpu_metrics.per_core_percentage;
                     lock.stats.mem_used_gb = mem_snap.used_gb();
                     lock.stats.mem_total_gb = mem_snap.total_gb();
                     lock.stats.mem_free_gb = mem_snap.free_gb();
                     lock.stats.mem_buff_cache_gb = mem_snap.buff_cache_gb();
                     lock.stats.swap_total_gb = mem_snap.swap_total_gb();
                     lock.stats.swap_used_gb = mem_snap.swap_used_gb();
-                    lock.stats.networks = network_usages;
+                    lock.stats.network_ingress_bytes = total_ingress;
+                    lock.stats.network_egress_bytes = total_egress;
                     lock.stats.load_average = load_avg;
+                    lock.stats.polling_rate = "5-sec".to_string();
+                    lock.stats.refresh_ts = now_ms;
                 }
 
                 tokio::time::sleep(Duration::from_millis(1000)).await;
@@ -125,8 +142,13 @@ impl TelemetryEngine {
                 let _gpu = gpu_collector.collect();
 
                 {
+                    let now_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
                     let mut lock = cache_slow.write().await;
                     lock.stats.disks = disks;
+                    lock.stats.refresh_list_ts = now_ms;
                 }
 
                 tokio::time::sleep(Duration::from_secs(30)).await;

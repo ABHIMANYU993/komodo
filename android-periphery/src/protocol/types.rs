@@ -37,7 +37,7 @@ pub struct SingleNetworkInterfaceUsage {
     pub egress_bytes: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SystemStats {
     pub cpu_perc: f32,
     #[serde(default)]
@@ -56,9 +56,34 @@ pub struct SystemStats {
     pub swap_used_gb: f64,
     pub disks: Vec<SingleDiskUsage>,
     #[serde(default)]
-    pub networks: Vec<SingleNetworkInterfaceUsage>,
+    pub network_ingress_bytes: f64,
     #[serde(default)]
-    pub cpus: Vec<f32>,
+    pub network_egress_bytes: f64,
+    pub polling_rate: String,
+    pub refresh_ts: i64,
+    pub refresh_list_ts: i64,
+}
+
+impl Default for SystemStats {
+    fn default() -> Self {
+        Self {
+            cpu_perc: 0.0,
+            load_average: SystemLoadAverage::default(),
+            mem_free_gb: 0.0,
+            mem_used_gb: 0.0,
+            mem_total_gb: 0.0,
+            mem_buff_cache_gb: 0.0,
+            mem_zfs_arc_gb: 0.0,
+            swap_total_gb: 0.0,
+            swap_used_gb: 0.0,
+            disks: Vec::new(),
+            network_ingress_bytes: 0.0,
+            network_egress_bytes: 0.0,
+            polling_rate: "5-sec".to_string(),
+            refresh_ts: 0,
+            refresh_list_ts: 0,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

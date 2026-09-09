@@ -116,7 +116,7 @@ impl PtySession {
             let (stdout_tx, stdout_rx) = mpsc::channel::<Vec<u8>>(64);
 
             let master_read_fd = master;
-            let master_write_fd = master;
+            let master_write_fd = libc::dup(master);
 
             // Spawn Tokio task for writing stdin to PTY
             tokio::spawn(async move {

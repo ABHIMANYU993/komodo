@@ -11,8 +11,8 @@ impl StorageCollector {
         let mut results = Vec::new();
         let mounts = Self::read_mounts();
 
-        // Track visited device names/paths to avoid reporting identical underlying partitions twice (e.g. /data and /storage/emulated/0)
-        let mut seen_targets = std::collections::HashSet::new();
+        // Track visited filesystem signatures (blocks, bavail) to avoid reporting identical underlying partitions twice (e.g. /data and /data_mirror)
+        let mut seen_fs_signatures = std::collections::HashSet::new();
 
         for (_device, mount_point, fs_type) in mounts {
             // Filter out virtual pseudo-filesystems
@@ -34,34 +34,37 @@ impl StorageCollector {
                 continue;
             }
 
-            // Only consider meaningful Android mount points (/data, /, /system, /vendor, /product, /mnt/media_rw/*)
-            if !mount_point.starts_with("/data")
-                && mount_point != "/"
-                && !mount_point.starts_with("/system")
-                && !mount_point.starts_with("/mnt/media_rw")
+            // Filter out internal Android bind-mount mirrors
+            if mount_point.starts_with("/data_mirror")
+                || mount_point.starts_with("/data/")
+                || mount_point.starts_with("/storage/emulated")
             {
                 continue;
             }
 
-            // Avoid reporting /storage/emulated/0 when /data is already reported
-            if mount_point.starts_with("/storage/emulated") {
-                continue;
-            }
-
-            if seen_targets.contains(&mount_point) {
+            // Only consider meaningful Android mount points (/data, /, /system, /system_ext, /vendor, /product, /mnt/media_rw/*)
+            if mount_point != "/data"
+                && mount_point != "/"
+                && !mount_point.starts_with("/system")
+                && !mount_point.starts_with("/vendor")
+                && !mount_point.starts_with("/product")
+                && !mount_point.starts_with("/mnt/media_rw")
+            {
                 continue;
             }
 
             if let Ok(stat) = Self::statvfs(&mount_point) {
                 if stat.total_gb > 0.05 {
                     // Ignore tiny mounts < 50MB
-                    seen_targets.insert(mount_point.clone());
-                    results.push(SingleDiskUsage {
-                        mount: PathBuf::from(&mount_point),
-                        file_system: fs_type,
-                        used_gb: stat.used_gb,
-                        total_gb: stat.total_gb,
-                    });
+                    let sig = (stat.total_blocks, stat.free_blocks);
+                    if seen_fs_signatures.insert(sig) {
+                        results.push(SingleDiskUsage {
+                            mount: PathBuf::from(&mount_point),
+                            file_system: fs_type,
+                            used_gb: stat.used_gb,
+                            total_gb: stat.total_gb,
+                        });
+                    }
                 }
             }
         }
@@ -125,6 +128,8 @@ impl StorageCollector {
         Ok(StatVfsResult {
             total_gb: total_bytes / gb,
             used_gb: used_bytes / gb,
+            total_blocks: stat.f_blocks,
+            free_blocks: stat.f_bavail,
         })
     }
 }
@@ -132,4 +137,6 @@ impl StorageCollector {
 struct StatVfsResult {
     total_gb: f64,
     used_gb: f64,
+    total_blocks: u64,
+    free_blocks: u64,
 }

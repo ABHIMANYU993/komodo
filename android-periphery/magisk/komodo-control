@@ -1,0 +1,185 @@
+#!/system/bin/sh
+# Komodo Android Periphery Control Utility
+# Management CLI for start, stop, restart, status, logs, and diagnostics
+
+KOMODO_DIR="/data/adb/komodo"
+CONFIG_FILE="$KOMODO_DIR/config.toml"
+LOG_FILE="$KOMODO_DIR/daemon.log"
+MODDIR="/data/adb/modules/komodo-android-periphery"
+MODDIR_UPDATE="/data/adb/modules_update/komodo-android-periphery"
+
+# Locate daemon binary
+if [ -x "$MODDIR/komodo-android-periphery" ]; then
+    DAEMON_BIN="$MODDIR/komodo-android-periphery"
+elif [ -x "$MODDIR_UPDATE/komodo-android-periphery" ]; then
+    DAEMON_BIN="$MODDIR_UPDATE/komodo-android-periphery"
+else
+    DAEMON_BIN=""
+fi
+
+get_pid() {
+    # Find daemon PID(s)
+    pgrep -f "$DAEMON_BIN" 2>/dev/null | head -n 1
+}
+
+cmd_status() {
+    PID=$(get_pid)
+    echo "=========================================="
+    echo "  Komodo Android Periphery Status"
+    echo "=========================================="
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+        echo "State:       RUNNING (PID $PID)"
+        echo "Binary:      $DAEMON_BIN"
+        echo "Config:      $CONFIG_FILE"
+        if [ -f "$CONFIG_FILE" ]; then
+            CORE_URL=$(grep '^core_url' "$CONFIG_FILE" | cut -d'=' -f2 | tr -d ' "')
+            NODE_NAME=$(grep '^connect_as' "$CONFIG_FILE" | cut -d'=' -f2 | tr -d ' "')
+            echo "Core URL:    $CORE_URL"
+            echo "Connect As:  $NODE_NAME"
+        fi
+        if [ -f "$KOMODO_DIR/keys/periphery.key" ]; then
+            echo "Identity:    Present (keys/periphery.key)"
+        else
+            echo "Identity:    Not yet initialized (pre-onboarding)"
+        fi
+    else
+        echo "State:       STOPPED"
+        echo "Binary:      ${DAEMON_BIN:-Not found}"
+    fi
+    echo "=========================================="
+    if [ -f "$LOG_FILE" ]; then
+        echo "Recent Log Entries (last 5 lines):"
+        tail -n 5 "$LOG_FILE"
+    fi
+}
+
+cmd_start() {
+    PID=$(get_pid)
+    if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
+        echo "Komodo Periphery is already running (PID $PID)."
+        return 0
+    fi
+
+    if [ -z "$DAEMON_BIN" ] || [ ! -x "$DAEMON_BIN" ]; then
+        echo "Error: Daemon binary not found or not executable."
+        return 1
+    fi
+
+    if [ ! -f "$CONFIG_FILE" ]; then
+        echo "Error: Configuration file $CONFIG_FILE does not exist."
+        return 1
+    fi
+
+    echo "Starting Komodo Android Periphery daemon..."
+    mkdir -p "$KOMODO_DIR"
+    chmod 700 "$KOMODO_DIR"
+    
+    # Launch daemon supervisor in background
+    (
+        while true; do
+            if [ -x "$DAEMON_BIN" ] && [ -f "$CONFIG_FILE" ]; then
+                echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] Starting komodo-android-periphery..." >> "$LOG_FILE"
+                "$DAEMON_BIN" --config "$CONFIG_FILE" >> "$LOG_FILE" 2>&1
+                EXIT_CODE=$?
+                echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] Agent exited ($EXIT_CODE). Restarting in 5s..." >> "$LOG_FILE"
+            fi
+            sleep 5
+        done
+    ) &
+
+    sleep 2
+    PID=$(get_pid)
+    if [ -n "$PID" ]; then
+        echo "Komodo Periphery started successfully (PID $PID)."
+    else
+        echo "Warning: Daemon did not start immediately. Check $LOG_FILE for details."
+    fi
+}
+
+cmd_stop() {
+    echo "Stopping Komodo Android Periphery..."
+    # Terminate supervisor and daemon
+    pkill -TERM -f "komodo-android-periphery" 2>/dev/null || true
+    
+    COUNT=0
+    while [ $COUNT -lt 5 ]; do
+        PID=$(get_pid)
+        [ -z "$PID" ] && break
+        sleep 1
+        COUNT=$((COUNT + 1))
+    done
+
+    PID=$(get_pid)
+    if [ -n "$PID" ]; then
+        echo "Process still alive, sending SIGKILL..."
+        pkill -KILL -f "komodo-android-periphery" 2>/dev/null || true
+    fi
+
+    echo "Komodo Periphery stopped."
+}
+
+cmd_restart() {
+    cmd_stop
+    sleep 1
+    cmd_start
+}
+
+cmd_logs() {
+    if [ -f "$LOG_FILE" ]; then
+        tail -f -n 50 "$LOG_FILE"
+    else
+        echo "Log file $LOG_FILE does not exist."
+    fi
+}
+
+cmd_diagnose() {
+    echo "=== Komodo Android Diagnostics ==="
+    echo "UID:            $(id -u) (expected 0)"
+    echo "SELinux Mode:   $(getenforce 2>/dev/null || echo 'Unknown')"
+    echo "Android API:    $(getprop ro.build.version.sdk 2>/dev/null)"
+    echo "Architecture:   $(getprop ro.product.cpu.abi 2>/dev/null)"
+    echo "Magisk Version: $(magisk -v 2>/dev/null || echo 'Not detected')"
+    echo "Module Path:    $MODDIR"
+    echo "Binary Found:   $DAEMON_BIN"
+    echo "Config Found:   $CONFIG_FILE"
+    if [ -f "$CONFIG_FILE" ]; then
+        CORE_URL=$(grep '^core_url' "$CONFIG_FILE" | cut -d'=' -f2 | tr -d ' "')
+        echo "Core Endpoint:  $CORE_URL"
+        HOST=$(echo "$CORE_URL" | sed 's|.*://||' | cut -d':' -f1)
+        PORT=$(echo "$CORE_URL" | sed 's|.*://||' | cut -d':' -f2 | cut -d'/' -f1)
+        if [ -n "$HOST" ] && [ -n "$PORT" ]; then
+            echo -n "Network Reachability to $HOST:$PORT: "
+            if /system/bin/curl -s -m 3 "http://$HOST:$PORT/" >/dev/null 2>&1 || nc -w 3 "$HOST" "$PORT" </dev/null >/dev/null 2>&1; then
+                echo "REACHABLE"
+            else
+                echo "UNREACHABLE (check network / firewall)"
+            fi
+        fi
+    fi
+    echo "==================================="
+}
+
+case "$1" in
+    status)
+        cmd_status
+        ;;
+    start)
+        cmd_start
+        ;;
+    stop)
+        cmd_stop
+        ;;
+    restart)
+        cmd_restart
+        ;;
+    logs)
+        cmd_logs
+        ;;
+    diagnose)
+        cmd_diagnose
+        ;;
+    *)
+        echo "Usage: komodo-control {status|start|stop|restart|logs|diagnose}"
+        exit 1
+        ;;
+esac

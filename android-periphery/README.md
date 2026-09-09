@@ -2,66 +2,54 @@
 
 A native, standalone Android Periphery daemon that allows rooted Android devices (running Magisk) to connect as managed `Server` nodes to an unmodified [Komodo](https://github.com/moghtech/komodo) Core deployment.
 
+---
+
+## Primary Installation Experience (One-Command Deployment)
+
+Run the following command directly on the Android device via **SSH**, **Android root shell**, or **Termux**:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ABHIMANYU993/komodo/main/scripts/setup-android-periphery.sh | sh -s -- \
+  --core-address="ws://192.168.31.80:9120" \
+  --connect-as="$(hostname)" \
+  --onboarding-key="YOUR_ONBOARDING_KEY"
+```
+
+The installer automatically:
+1. Detects Android ARM64 architecture.
+2. Checks root and Magisk CLI availability.
+3. Downloads the prebuilt release artifact (`komodo-android-periphery.zip`).
+4. Verifies the SHA-256 cryptographic checksum.
+5. Installs the Magisk module via `magisk --install-module`.
+6. Generates runtime configuration (`/data/adb/komodo/config.toml`).
+7. Starts the background supervisor daemon.
+8. Verifies authenticated connection with Komodo Core.
+9. Purges the one-time onboarding secret from disk upon successful registration.
+10. Offers an optional reboot prompt to validate boot persistence.
+
+---
+
 ## What This Is
-- A native compiled Rust daemon (`aarch64-linux-android`) running as root (`UID 0`) on Android.
-- An outbound WebSocket client implementing the official Komodo Periphery protocol (`Noise_XX_25519_ChaChaPoly_BLAKE2s`).
-- A dynamic telemetry engine providing real-time CPU, Memory, Disk, Network, Process, Battery, and Thermal metrics into Komodo's web dashboard.
-- A native PTY root terminal server providing an interactive `/system/bin/sh` session inside the browser.
-- Packaged as a standard Magisk module (`late_start` service).
+- **Native Android ARM64 Agent**: Compiled against Bionic libc (`aarch64-linux-android`) running with root privileges (`UID 0`).
+- **Official Komodo Protocol**: Outbound WebSocket client implementing Noise XX mutual authentication (`Noise_XX_25519_ChaChaPoly_BLAKE2s`).
+- **Real-Time Telemetry**: Multi-rate collectors for CPU, Memory, Disk, Network, Process (780+ Android processes), Battery, and Thermal status.
+- **Root Web Terminal**: Sentinel-framed interactive `/system/bin/sh` session inside Komodo web dashboard.
+- **Magisk Module Lifecycle**: Managed via Magisk App with `late_start` boot persistence, disable switches, and clean uninstall hooks.
 
 ## What This Is Not
-- **Not a Komodo redesign**: Komodo Core and the official Komodo UI remain 100% untouched.
-- **Not a modification of the Linux Periphery**: `bin/periphery` remains reference code.
-- **Not dependent on Termux**: The daemon runs natively under Magisk root userspace.
-- **Not dependent on ADB or SSH**: ADB is strictly for development and debugging; the production daemon connects via outbound WebSocket directly to Core.
-- **Not hard-coded to any phone**: Dynamically discovers CPU clusters, frequencies, thermal zones, battery paths, and network interfaces.
-
-## Quick Start
-
-### 1. Build
-```bash
-# Set Android NDK toolchain path
-export ANDROID_NDK_HOME=/home/icebyte/work/android-ndk-r26d
-export PATH="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin:$PATH"
-
-# Build for aarch64-linux-android
-cargo build --package komodo-android-periphery --target aarch64-linux-android --release
-```
-
-### 2. Configure
-Create `/data/adb/komodo/config.toml` on the device:
-```toml
-# Komodo Core WebSocket URL
-core_url = "ws://192.168.1.50:8120"
-
-# Node identity in Komodo
-connect_as = "Android_Redmi_Note_10_Pro"
-
-# Optional onboarding key (required only for initial registration)
-# onboarding_key = "your_onboarding_key_here"
-
-# Log level (trace, debug, info, warn, error)
-log_level = "info"
-```
-
-### 3. Deploy
-```bash
-# Push binary
-adb push target/aarch64-linux-android/release/komodo-android-periphery /data/adb/komodo/bin/
-adb shell "su -c 'chmod 755 /data/adb/komodo/bin/komodo-android-periphery'"
-
-# Test run
-adb shell "su -c '/data/adb/komodo/bin/komodo-android-periphery --config /data/adb/komodo/config.toml'"
-```
+- **NEVER builds on the phone**: The phone downloads prebuilt release artifacts; no Rust, Cargo, Python, NDK, or compilers are needed on device.
+- **Zero ADB dependency**: ADB is used strictly during development. The installer runs 100% on-device.
+- **Zero Core or Linux Periphery modifications**: Komodo Core and Linux Periphery remain 100% untouched.
 
 ---
 
 ## Documentation Directory
-- [IMPLEMENTATION_BASELINE.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/IMPLEMENTATION_BASELINE.md): Git baseline, toolchain, and commit pins.
+- [INSTALL.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/INSTALL.md): Step-by-step one-command installation guide and options.
+- [INSTALLATION-ARCHITECTURE.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/INSTALLATION-ARCHITECTURE.md): Magisk module vs `service.d` architectural evaluation, filesystem layout, and security model.
+- [UPGRADE.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/UPGRADE.md): Seamless upgrades, snapshot backups, and rollback instructions.
+- [UNINSTALL.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/UNINSTALL.md): Complete uninstallation workflow.
+- [TROUBLESHOOTING.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/TROUBLESHOOTING.md): Diagnostic CLI, log analysis, and network verification.
+- [PHASE1_REPORT.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/PHASE1_REPORT.md): Validation report with live physical telemetry from Xiaomi Redmi Note 10 Pro.
 - [PROTOCOL-CONFORMANCE.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/PROTOCOL-CONFORMANCE.md): Formal wire protocol and Noise state machine specifications.
 - [ARCHITECTURE.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/ARCHITECTURE.md): Multi-rate scheduler, lock-free cache, and subprotocols.
-- [COMPATIBILITY.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/COMPATIBILITY.md): Android versions, SoC vendor adapters, and SELinux considerations.
-- [SECURITY.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/SECURITY.md): Threat model, key storage, permissions, and audit logging.
-- [DEVELOPMENT.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/DEVELOPMENT.md): Build targets, cross-compilation setup, and test runner.
-- [PROTOCOL.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/PROTOCOL.md): Framing layout, discriminators, and channel UUID multiplexing.
 - [DEVICE-CAPABILITIES.md](file:///home/icebyte/Projects/Personal/Android/Redmi_Note_10_Pro/komodo/android-periphery/DEVICE-CAPABILITIES.md): Dynamic discovery engine and capability registry.

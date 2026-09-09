@@ -1,0 +1,68 @@
+name: Android Periphery Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release Tag (e.g. v0.1.0)'
+        required: false
+        default: 'v0.1.0'
+
+jobs:
+  build-release:
+    name: Build & Package Android Periphery
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Install Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: aarch64-linux-android
+
+      - name: Setup Android NDK
+        uses: ncapdevi/setup-android-ndk@v2
+        with:
+          ndk-version: r26d
+
+      - name: Run Unit Tests
+        run: |
+          cargo test --manifest-path android-periphery/Cargo.toml --verbose
+
+      - name: Package Release Artifacts
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          # Build and assemble Magisk package
+          ./android-periphery/package.sh
+
+      - name: Publish GitHub Release Assets
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: |
+            android-periphery/dist/komodo-android-periphery.zip
+            android-periphery/dist/komodo-android-periphery.zip.sha256
+            android-periphery/dist/komodo-android-periphery-*.zip
+            android-periphery/dist/komodo-android-periphery-*.zip.sha256
+          draft: false
+          prerelease: false
+
+      - name: Upload Workflow Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: komodo-android-periphery-artifacts
+          path: |
+            android-periphery/dist/komodo-android-periphery.zip
+            android-periphery/dist/komodo-android-periphery.zip.sha256
+            android-periphery/dist/komodo-android-periphery-*.zip
+            android-periphery/dist/komodo-android-periphery-*.zip.sha256
+          if-no-files-found: error

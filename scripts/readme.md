@@ -95,3 +95,21 @@ curl -sSL https://raw.githubusercontent.com/moghtech/komodo/main/scripts/setup-p
   --onboarding-key <YOUR-ONBOARDING-KEY> \
   --force-service-file
 ```
+
+---
+
+## Android Periphery (Root / Magisk)
+
+For rooted Android ARM64 devices running Magisk:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ABHIMANYU993/komodo/main/scripts/setup-android-periphery.sh \
+  | sh -s -- --core-address <YOUR-CORE-ADDRESS> \
+  --connect-as "$(hostname)" \
+  --onboarding-key <YOUR-ONBOARDING-KEY>
+```
+
+- **Canonical Installer**: `scripts/setup-android-periphery.sh` (POSIX `/system/bin/sh`).
+- **Uninstaller**: `scripts/uninstall-android-periphery.sh`.
+- **Packaging**: Magisk Module (`/data/adb/modules/komodo-android-periphery/`).
+- **No Dependencies**: Phone does not need Python, Rust, Cargo, NDK, or Docker.

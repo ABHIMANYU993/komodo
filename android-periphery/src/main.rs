@@ -84,9 +84,9 @@ async fn main() -> anyhow::Result<()> {
     let keys = IdentityKeys::load_or_generate(&config.keys_dir)?;
     info!("Node Public Key (SPKI): {}", keys.public_key.as_str());
 
-    // 5. Initialize Multi-Rate Telemetry Engine
-    let telemetry = TelemetryEngine::new();
-    telemetry.start();
+    // 5. Initialize High-Frequency Telemetry Engine
+    let telemetry = TelemetryEngine::new(&config.stats_polling_rate);
+    telemetry.start(config.stats_polling_rate.clone(), config.stats_interval_duration());
 
     // 6. Start Secure Connection Loop to Komodo Core
     let connection_loop = CoreConnectionLoop::new(config, keys, capabilities, telemetry);

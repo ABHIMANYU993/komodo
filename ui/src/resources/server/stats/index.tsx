@@ -27,7 +27,7 @@ export default function ServerStats({
     { server: id },
     {
       enabled: isServerAvailable,
-      refetchInterval: 10_000,
+      refetchInterval: 1_000,
     },
   ).data;
 

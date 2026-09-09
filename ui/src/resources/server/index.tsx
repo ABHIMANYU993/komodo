@@ -222,7 +222,7 @@ export const ServerComponents: RequiredResourceComponents<
         { server: id },
         {
           enabled: isServerAvailable,
-          refetchInterval: 5_000,
+          refetchInterval: 1_000,
         },
       ).data;
 
@@ -249,7 +249,7 @@ export const ServerComponents: RequiredResourceComponents<
         { server: id },
         {
           enabled: isServerAvailable,
-          refetchInterval: 5_000,
+          refetchInterval: 1_000,
         },
       ).data;
       return (
@@ -273,7 +273,7 @@ export const ServerComponents: RequiredResourceComponents<
         { server: id },
         {
           enabled: isServerAvailable,
-          refetchInterval: 5_000,
+          refetchInterval: 1_000,
         },
       ).data;
       const diskTotalGb = stats?.disks.reduce(

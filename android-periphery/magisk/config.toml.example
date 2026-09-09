@@ -22,3 +22,7 @@ log_level = "info"
 
 # Directory where persistent X25519 node identity keys are stored
 keys_dir = "/data/adb/komodo/keys"
+
+# Telemetry stats polling rate: "1-sec", "2-sec", "5-sec" (default: "1-sec")
+# Controls real-time CPU, RAM, Disk, Load Average, and Network sampling frequency.
+stats_polling_rate = "1-sec"

@@ -59,8 +59,8 @@ export default function ServerStatsCard({ id }: ServerStatsCardProps) {
     { server: id },
     {
       enabled,
-      refetchInterval: 15_000,
-      staleTime: 5_000,
+      refetchInterval: 1_000,
+      staleTime: 1_000,
     },
   ).data;
 

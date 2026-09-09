@@ -215,9 +215,10 @@ impl CoreConnectionLoop {
                             let caps = capabilities.clone();
                             let term = terminal_mgr.clone();
                             let pubkey = public_key_str.clone();
+                            let polling_rate = self.config.stats_polling_rate.clone();
 
                             tokio::spawn(async move {
-                                Self::handle_core_request(channel, payload, tx, tele, caps, term, pubkey).await;
+                                Self::handle_core_request(channel, payload, tx, tele, caps, term, pubkey, polling_rate).await;
                             });
                         }
                         RawTransportMessage::Terminal { channel, status: _, payload } => {
@@ -249,6 +250,7 @@ impl CoreConnectionLoop {
         capabilities: DeviceCapabilities,
         terminal_mgr: Arc<TerminalManager>,
         public_key_str: String,
+        stats_polling_rate: String,
     ) {
         let req = match PeripheryRequest::parse(&payload) {
             Ok(r) => r,
@@ -280,9 +282,9 @@ impl CoreConnectionLoop {
                     public_key: public_key_str,
                     terminals_disabled: false,
                     container_terminals_disabled: true,
-                    stats_polling_rate: "5-sec".to_string(),
+                    stats_polling_rate,
                     docker_connected: false,
-                    public_ip: None,
+                    public_ip: snapshot.public_ip.clone(),
                 };
 
                 let response = PollStatusResponse {

@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 
-pub const AGENT_VERSION: &str = "0.1.0";
+pub const AGENT_VERSION: &str = "2.3.3";
 pub const PROTOCOL_COMPATIBILITY_VERSION: &str = "2.3.3";
 pub const UPSTREAM_COMPATIBILITY_COMMIT: &str = "780ac68b992094a9fccd5fffb760e0c84fd3c3d1";
 
@@ -36,6 +36,10 @@ pub struct AgentConfig {
     /// Skip TLS certificate verification (for self-signed certs)
     #[serde(default)]
     pub tls_insecure_skip_verify: bool,
+
+    /// Stats polling rate: e.g. "1-sec", "2-sec", "5-sec" (default: "1-sec")
+    #[serde(default = "default_stats_polling_rate")]
+    pub stats_polling_rate: String,
 }
 
 fn default_keys_dir() -> PathBuf {
@@ -54,7 +58,23 @@ fn default_reconnect_secs() -> u64 {
     5
 }
 
+fn default_stats_polling_rate() -> String {
+    "1-sec".to_string()
+}
+
 impl AgentConfig {
+    /// Returns the polling interval as a Duration
+    pub fn stats_interval_duration(&self) -> std::time::Duration {
+        let rate = self.stats_polling_rate.trim();
+        if rate.ends_with("-sec") {
+            let secs: u64 = rate.trim_end_matches("-sec").parse().unwrap_or(1);
+            std::time::Duration::from_secs(secs.max(1))
+        } else if let Ok(secs) = rate.parse::<u64>() {
+            std::time::Duration::from_secs(secs.max(1))
+        } else {
+            std::time::Duration::from_secs(1)
+        }
+    }
     /// Load configuration from a specified path, or search standard locations:
     /// 1. Specified `--config <path>`
     /// 2. `/data/adb/komodo/config.toml`

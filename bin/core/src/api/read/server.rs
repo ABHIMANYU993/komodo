@@ -349,8 +349,9 @@ impl Resolve<ReadArgs> for GetSystemStats {
   }
 }
 
-// This protects the peripheries from spam requests
-const PROCESSES_EXPIRY: u128 = FIFTEEN_SECONDS_MS;
+// Short cache allows dynamic UI polling rates (e.g. 1-sec, 2-sec, 5-sec) to fetch fresh stats
+// while still coalescing burst requests within 500ms
+const PROCESSES_EXPIRY: u128 = 500;
 type ProcessesCache =
   Mutex<HashMap<String, Arc<(Vec<SystemProcess>, u128)>>>;
 fn processes_cache() -> &'static ProcessesCache {

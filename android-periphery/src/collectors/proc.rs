@@ -1,11 +1,20 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::Read;
 use std::time::Instant;
 use crate::protocol::types::SystemProcess;
 
+#[derive(Clone)]
+struct ProcessMeta {
+    name: String,
+    exe: String,
+    cmd: Vec<String>,
+    start_time: f64,
+}
+
 pub struct ProcessCollector {
     prev_cpu_times: HashMap<u32, u64>,
+    meta_cache: HashMap<u32, ProcessMeta>,
     prev_time: Option<Instant>,
     clock_ticks_per_sec: f64,
     page_size_kb: f64,
@@ -21,6 +30,7 @@ impl ProcessCollector {
 
         Self {
             prev_cpu_times: HashMap::new(),
+            meta_cache: HashMap::new(),
             prev_time: None,
             clock_ticks_per_sec: ticks,
             page_size_kb: page_kb,
@@ -28,12 +38,13 @@ impl ProcessCollector {
     }
 
     /// Enumerate all processes dynamically from `/proc/[pid]/`.
-    /// Handles race conditions (ENOENT) silently.
+    /// Caches static metadata (exe, cmd, start_time) per PID to minimize system calls and CPU load.
     pub fn collect(&mut self) -> Vec<SystemProcess> {
         let now = Instant::now();
         let elapsed_secs = self.prev_time.map(|t| now.duration_since(t).as_secs_f64()).unwrap_or(1.0);
 
         let mut current_cpu_times = HashMap::new();
+        let mut current_pids = HashSet::new();
         let mut processes = Vec::new();
 
         let Ok(entries) = fs::read_dir("/proc") else {
@@ -47,6 +58,7 @@ impl ProcessCollector {
                 continue; // Not a numeric PID directory
             };
 
+            current_pids.insert(pid);
             let proc_path = entry.path();
 
             // Read /proc/[pid]/stat
@@ -92,35 +104,49 @@ impl ProcessCollector {
             let rss_pages: f64 = fields[21].parse().unwrap_or(0.0);
             let mem_mb = (rss_pages * self.page_size_kb) / 1024.0;
 
-            // Start time is field 19 (in clock ticks since boot)
-            let start_ticks: f64 = fields[19].parse().unwrap_or(0.0);
-            let start_time_secs = start_ticks / self.clock_ticks_per_sec;
-
-            // Read /proc/[pid]/cmdline (NUL-separated)
-            let cmd_path = proc_path.join("cmdline");
-            let cmd = if let Ok(mut f) = File::open(&cmd_path) {
-                let mut buf = Vec::new();
-                let _ = f.read_to_end(&mut buf);
-                buf.split(|&b| b == 0)
-                    .filter(|s| !s.is_empty())
-                    .map(|s| String::from_utf8_lossy(s).to_string())
-                    .collect()
+            // Reuse cached metadata (cmdline, exe, start_time) to avoid re-reading 1000+ files per second
+            let meta = if let Some(cached) = self.meta_cache.get(&pid) {
+                cached.clone()
             } else {
-                vec![comm.clone()]
-            };
+                // Start time is field 19 (in clock ticks since boot)
+                let start_ticks: f64 = fields[19].parse().unwrap_or(0.0);
+                let start_time_secs = start_ticks / self.clock_ticks_per_sec;
 
-            // Read /proc/[pid]/exe symlink
-            let exe_path = proc_path.join("exe");
-            let exe = fs::read_link(&exe_path)
-                .map(|p| p.to_string_lossy().to_string())
-                .unwrap_or_default();
+                // Read /proc/[pid]/cmdline (NUL-separated)
+                let cmd_path = proc_path.join("cmdline");
+                let cmd = if let Ok(mut f) = File::open(&cmd_path) {
+                    let mut buf = Vec::new();
+                    let _ = f.read_to_end(&mut buf);
+                    buf.split(|&b| b == 0)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| String::from_utf8_lossy(s).to_string())
+                        .collect()
+                } else {
+                    vec![comm.clone()]
+                };
+
+                // Read /proc/[pid]/exe symlink
+                let exe_path = proc_path.join("exe");
+                let exe = fs::read_link(&exe_path)
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default();
+
+                let new_meta = ProcessMeta {
+                    name: comm,
+                    exe,
+                    cmd,
+                    start_time: start_time_secs,
+                };
+                self.meta_cache.insert(pid, new_meta.clone());
+                new_meta
+            };
 
             processes.push(SystemProcess {
                 pid,
-                name: comm,
-                exe,
-                cmd,
-                start_time: start_time_secs,
+                name: meta.name,
+                exe: meta.exe,
+                cmd: meta.cmd,
+                start_time: meta.start_time,
                 cpu_perc,
                 mem_mb,
                 disk_read_kb: 0.0,
@@ -129,6 +155,7 @@ impl ProcessCollector {
         }
 
         self.prev_cpu_times = current_cpu_times;
+        self.meta_cache.retain(|pid, _| current_pids.contains(pid));
         self.prev_time = Some(now);
 
         processes

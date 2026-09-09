@@ -317,11 +317,17 @@ function HistoricalStats({
           granularity,
         }),
       refetchInterval:
-        granularity === Types.Timelength.FiveSeconds
-          ? 5_000
-          : granularity === Types.Timelength.FifteenSeconds
-            ? 10_000
-            : 15_000,
+        granularity === Types.Timelength.OneSecond
+          ? 1_000
+          : granularity === Types.Timelength.TwoSeconds
+            ? 2_000
+            : granularity === Types.Timelength.ThreeSeconds
+              ? 3_000
+              : granularity === Types.Timelength.FiveSeconds
+                ? 5_000
+                : granularity === Types.Timelength.FifteenSeconds
+                  ? 10_000
+                  : 15_000,
     })),
   });
 
@@ -345,6 +351,9 @@ function HistoricalStats({
               granularity && setGranularity(granularity as Types.Timelength)
             }
             data={[
+              Types.Timelength.OneSecond,
+              Types.Timelength.TwoSeconds,
+              Types.Timelength.ThreeSeconds,
               Types.Timelength.FiveSeconds,
               Types.Timelength.FifteenSeconds,
               Types.Timelength.ThirtySeconds,

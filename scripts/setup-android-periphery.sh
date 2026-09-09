@@ -56,6 +56,7 @@ Optional Parameters:
   --version=<version>      Specify release version (e.g. v0.1.0, defaults to latest)
   --artifact-url=<url>     Direct URL to prebuilt komodo-android-periphery.zip
   --artifact-file=<path>   Local path to prebuilt komodo-android-periphery.zip
+  --polling-rate=<rate>    Telemetry polling interval (e.g. 1-sec, 2-sec, default: 1-sec)
   --non-interactive        Disable interactive prompts (e.g. reboot prompt)
   --verbose                Enable detailed logging
   --force                  Reinstall even if already installed and healthy
@@ -79,6 +80,7 @@ ARTIFACT_FILE=""
 NON_INTERACTIVE=0
 VERBOSE=0
 FORCE=0
+POLLING_RATE="1-sec"
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -101,6 +103,13 @@ while [ $# -gt 0 ]; do
             ;;
         --onboarding-key)
             ONBOARDING_KEY="$2"
+            shift
+            ;;
+        --polling-rate=*|--stats-polling-rate=*)
+            POLLING_RATE="${1#*=}"
+            ;;
+        --polling-rate|--stats-polling-rate)
+            POLLING_RATE="$2"
             shift
             ;;
         --version=*)
@@ -364,12 +373,22 @@ fi
 # Stage 6: Configuring Periphery Service (Task 9, 10)
 log_info "[6/8] Configuring Periphery service..."
 
+# Normalize polling rate to ensure format like "1-sec"
+case "$POLLING_RATE" in
+    [0-9]*)
+        if ! echo "$POLLING_RATE" | grep -q -- "-sec"; then
+            POLLING_RATE="${POLLING_RATE}-sec"
+        fi
+        ;;
+esac
+
 # Write secure config.toml (mode 0600)
 cat > "$CONFIG_FILE" <<EOF
 core_url = "$CORE_ADDRESS"
 connect_as = "$CONNECT_AS"
 log_level = "info"
 keys_dir = "$KEYS_DIR"
+stats_polling_rate = "$POLLING_RATE"
 EOF
 
 # Include onboarding key only if provided (initial onboarding)

@@ -112,8 +112,8 @@ cmd_stop() {
     done
 
     # Also terminate any running supervisor loops
-    for pid in $(pgrep -f "sh .*/service.sh" 2>/dev/null || true); do
-        if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+    for pid in $(pgrep -f "sh .*/service.sh" 2>/dev/null || true) $(pgrep -f "komodo-control start" 2>/dev/null || true); do
+        if [ -n "$pid" ] && [ "$pid" != "$$" ] && [ "$pid" != "$PPID" ]; then
             kill -TERM "$pid" 2>/dev/null || true
         fi
     done

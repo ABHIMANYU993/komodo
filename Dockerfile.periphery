@@ -1,0 +1,13 @@
+# ============================================================
+# Komodo Periphery — Custom Image (v2.4.0)
+# Uses the official upstream Linux periphery image.
+# The Android periphery is a separate native binary (see
+# android-periphery/ and the android-periphery-release workflow).
+# ============================================================
+
+FROM ghcr.io/moghtech/komodo-periphery:2
+
+LABEL org.opencontainers.image.title="Komodo Periphery (ABHIMANYU993 fork)" \
+      org.opencontainers.image.description="Komodo Periphery agent – standard Linux deployment." \
+      org.opencontainers.image.source="https://github.com/ABHIMANYU993/komodo" \
+      org.opencontainers.image.version="2.4.0"

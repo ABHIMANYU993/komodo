@@ -1,6 +1,7 @@
 pub mod battery;
 pub mod cpu;
 pub mod gpu;
+pub mod ip;
 pub mod mem;
 pub mod net;
 pub mod proc;
@@ -28,6 +29,7 @@ use thermal::ThermalCollector;
 pub struct TelemetrySnapshot {
     pub stats: SystemStats,
     pub processes: Vec<SystemProcess>,
+    pub public_ip: Option<String>,
 }
 
 pub struct TelemetryEngine {
@@ -35,7 +37,7 @@ pub struct TelemetryEngine {
 }
 
 impl TelemetryEngine {
-    pub fn new() -> Self {
+    pub fn new(polling_rate: &str) -> Self {
         let mut initial = TelemetrySnapshot::default();
         initial.stats.disks = StorageCollector::collect();
         let now_ms = std::time::SystemTime::now()
@@ -44,6 +46,7 @@ impl TelemetryEngine {
             .unwrap_or(0);
         initial.stats.refresh_list_ts = now_ms;
         initial.stats.refresh_ts = now_ms;
+        initial.stats.polling_rate = polling_rate.to_string();
         Self {
             cache: Arc::new(RwLock::new(initial)),
         }
@@ -53,11 +56,12 @@ impl TelemetryEngine {
         self.cache.clone()
     }
 
-    /// Spawns the multi-rate background sampling tasks.
-    pub fn start(&self) {
+    /// Spawns the background sampling tasks configured with the active polling rate.
+    pub fn start(&self, polling_rate_str: String, polling_duration: Duration) {
         let cache = self.cache.clone();
+        let rate_str = polling_rate_str.clone();
 
-        // 1. FAST TIER (~1 second): CPU, Memory, Network
+        // 1. PRIMARY SYSTEM STATS LOOP (CPU, Memory, Disks, Network, Load Average)
         tokio::spawn(async move {
             let mut cpu_collector = CpuCollector::new();
             let mut net_collector = NetworkCollector::new();
@@ -83,7 +87,10 @@ impl TelemetryEngine {
                 // Read Load Average
                 let load_avg = Self::read_load_average();
 
-                // Update cache
+                // Read Disks / Storage (fast statvfs call)
+                let disks = StorageCollector::collect();
+
+                // Update cache with unified timestamps
                 {
                     let now_ms = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -103,59 +110,57 @@ impl TelemetryEngine {
                     lock.stats.network_ingress_bytes = total_ingress;
                     lock.stats.network_egress_bytes = total_egress;
                     lock.stats.load_average = load_avg;
-                    lock.stats.polling_rate = "5-sec".to_string();
+                    lock.stats.disks = disks;
+                    lock.stats.polling_rate = rate_str.clone();
                     lock.stats.refresh_ts = now_ms;
+                    lock.stats.refresh_list_ts = now_ms;
                 }
 
-                tokio::time::sleep(Duration::from_millis(1000)).await;
+                tokio::time::sleep(polling_duration).await;
             }
         });
 
-        // 2. MEDIUM TIER (~3 seconds): Process list, Battery
+        // 2. PROCESSES & HARDWARE SENSORS LOOP
         let cache_med = self.cache.clone();
+        let proc_interval = polling_duration.max(Duration::from_millis(1000));
         tokio::spawn(async move {
             let mut proc_collector = ProcessCollector::new();
             let battery_collector = BatteryCollector::new();
+            let thermal_collector = ThermalCollector::new();
+            let gpu_collector = GpuCollector::new();
 
             loop {
                 let procs = proc_collector.collect();
                 let _batt = battery_collector.collect();
+                let _thermal = thermal_collector.collect();
+                let _gpu = gpu_collector.collect();
 
                 {
                     let mut lock = cache_med.write().await;
                     lock.processes = procs;
                 }
 
-                tokio::time::sleep(Duration::from_millis(3000)).await;
+                tokio::time::sleep(proc_interval).await;
             }
         });
 
-        // 3. SLOW TIER (~30 seconds): Disks, Thermal, Static Hardware
-        let cache_slow = self.cache.clone();
+        // 3. BACKGROUND IP RESOLUTION (non-blocking, cached)
+        let cache_ip = self.cache.clone();
         tokio::spawn(async move {
-            let thermal_collector = ThermalCollector::new();
-            let gpu_collector = GpuCollector::new();
-
             loop {
-                let disks = StorageCollector::collect();
-                let _thermal = thermal_collector.collect();
-                let _gpu = gpu_collector.collect();
-
-                {
-                    let now_ms = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_millis() as i64)
-                        .unwrap_or(0);
-                    let mut lock = cache_slow.write().await;
-                    lock.stats.disks = disks;
-                    lock.stats.refresh_list_ts = now_ms;
+                if let Some(resolved_ip) = ip::IpResolver::resolve().await {
+                    let mut lock = cache_ip.write().await;
+                    lock.public_ip = Some(resolved_ip);
                 }
-
-                tokio::time::sleep(Duration::from_secs(30)).await;
+                // Re-check IP periodically every 15 minutes
+                tokio::time::sleep(Duration::from_secs(900)).await;
             }
         });
 
-        info!("Multi-rate telemetry engine started (FAST=1s, MEDIUM=3s, SLOW=30s)");
+        info!(
+            "High-frequency telemetry engine started (polling_rate={}, interval={:?})",
+            polling_rate_str, polling_duration
+        );
     }
 
     /// Read `/proc/loadavg` for 1m, 5m, 15m load averages.

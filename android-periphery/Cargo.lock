@@ -651,7 +651,7 @@ dependencies = [
 
 [[package]]
 name = "komodo-android-periphery"
-version = "0.1.0"
+version = "2.3.3"
 dependencies = [
  "anyhow",
  "arc-swap",

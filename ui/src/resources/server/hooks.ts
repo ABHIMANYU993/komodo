@@ -53,7 +53,7 @@ export function useServerStats(id: string) {
     { server: id },
     {
       enabled: isServerAvailable,
-      refetchInterval: 10_000,
+      refetchInterval: 1_000,
     },
   ).data;
 }

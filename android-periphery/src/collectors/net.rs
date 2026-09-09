@@ -108,10 +108,10 @@ impl NetworkCollector {
 
                         rates.push(InterfaceRate {
                             name: name.clone(),
-                            rx_bytes_per_sec: rx_delta as f64 / elapsed_secs,
-                            tx_bytes_per_sec: tx_delta as f64 / elapsed_secs,
-                            rx_packets_per_sec: rx_pkts as f64 / elapsed_secs,
-                            tx_packets_per_sec: tx_pkts as f64 / elapsed_secs,
+                            rx_bytes_per_sec: (rx_delta as f64 / elapsed_secs).round(),
+                            tx_bytes_per_sec: (tx_delta as f64 / elapsed_secs).round(),
+                            rx_packets_per_sec: (rx_pkts as f64 / elapsed_secs).round(),
+                            tx_packets_per_sec: (tx_pkts as f64 / elapsed_secs).round(),
                         });
                     } else {
                         // Newly appeared interface

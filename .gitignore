@@ -1,5 +1,7 @@
 target
 node_modules
+# Patched core binary — too large for git; applied inline in Dockerfile.core
+core-patched-bin/
 dist
 deno.lock
 .env

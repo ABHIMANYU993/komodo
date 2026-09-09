@@ -1,0 +1,8 @@
+target/
+dist/
+*.md
+src/
+Cargo.toml
+Cargo.lock
+package.sh
+.cargo/

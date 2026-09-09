@@ -100,7 +100,7 @@ while [ $COUNT -lt 5 ]; do
     COUNT=$((COUNT + 1))
 done
 
-for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true) $(pgrep -f "/data/adb/modules.*/komodo-android-periphery" 2>/dev/null || true); do
+for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true) $(pgrep -f "/data/adb/modules.*/komodo-android-periphery" 2>/dev/null || true) $(pgrep -f "komodo-control" 2>/dev/null || true); do
     if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
         kill -KILL "$pid" 2>/dev/null || true
     fi

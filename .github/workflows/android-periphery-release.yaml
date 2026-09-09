@@ -11,10 +11,15 @@ on:
         required: false
         default: 'v0.1.0'
 
+permissions:
+  contents: write
+
 jobs:
   build-release:
     name: Build & Package Android Periphery
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout Code
@@ -52,19 +57,26 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        with:
+          tag_name: ${{ github.ref_name || github.event.inputs.release_tag || 'v0.1.0' }}
+          name: Komodo Android Periphery ${{ github.ref_name || github.event.inputs.release_tag || 'v0.1.0' }}
+          body: |
+            ## Komodo Android Periphery Release
+            Automated production release of Komodo Android Periphery agent and Magisk deployment packages for Android (aarch64).
+            
+            ### Included Assets
+            - `komodo-android-periphery.zip`: Canonical Magisk module package (always points to current release)
+            - `komodo-android-periphery.zip.sha256`: SHA-256 checksum
+            - `komodo-android-periphery-v0.1.0.zip`: Versioned Magisk module package
+            - `komodo-android-periphery-v0.1.0.zip.sha256`: Versioned SHA-256 checksum
+          files: |
+            android-periphery/dist/komodo-android-periphery.zip
+            android-periphery/dist/komodo-android-periphery.zip.sha256
+            android-periphery/dist/komodo-android-periphery-*.zip
+            android-periphery/dist/komodo-android-periphery-*.zip.sha256
+          draft: false
+          prerelease: false
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          TAG="${{ github.ref_name }}"
-          [ -z "$TAG" ] && TAG="${{ github.event.inputs.release_tag }}"
-          [ -z "$TAG" ] && TAG="v0.1.0"
-          echo "Publishing GitHub Release for $TAG..."
-          gh release create "$TAG" \
-            android-periphery/dist/komodo-android-periphery.zip \
-            android-periphery/dist/komodo-android-periphery.zip.sha256 \
-            --title "Komodo Android Periphery $TAG" \
-            --notes "Automated release of Komodo Android Periphery ($TAG)" || \
-          gh release upload "$TAG" \
-            android-periphery/dist/komodo-android-periphery.zip \
-            android-periphery/dist/komodo-android-periphery.zip.sha256 \
-            --clobber || true
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -18,12 +18,18 @@ else
 fi
 
 get_pid() {
-    # Find daemon PID(s)
-    pgrep -f "$DAEMON_BIN" 2>/dev/null | head -n 1
+    # Find daemon PID(s) - match exact process name (comm)
+    for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true); do
+        if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+            echo "$pid"
+            return 0
+        fi
+    done
+    return 1
 }
 
 cmd_status() {
-    PID=$(get_pid)
+    PID=$(get_pid || true)
     echo "=========================================="
     echo "  Komodo Android Periphery Status"
     echo "=========================================="
@@ -54,7 +60,7 @@ cmd_status() {
 }
 
 cmd_start() {
-    PID=$(get_pid)
+    PID=$(get_pid || true)
     if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
         echo "Komodo Periphery is already running (PID $PID)."
         return 0
@@ -88,7 +94,7 @@ cmd_start() {
     ) &
 
     sleep 2
-    PID=$(get_pid)
+    PID=$(get_pid || true)
     if [ -n "$PID" ]; then
         echo "Komodo Periphery started successfully (PID $PID)."
     else
@@ -98,21 +104,32 @@ cmd_start() {
 
 cmd_stop() {
     echo "Stopping Komodo Android Periphery..."
-    # Terminate supervisor and daemon
-    pkill -TERM -f "komodo-android-periphery" 2>/dev/null || true
+    # Terminate daemon processes safely without matching this control script
+    for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true); do
+        if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Also terminate any running supervisor loops
+    for pid in $(pgrep -f "sh .*/service.sh" 2>/dev/null || true); do
+        if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    done
     
     COUNT=0
     while [ $COUNT -lt 5 ]; do
-        PID=$(get_pid)
+        PID=$(get_pid || true)
         [ -z "$PID" ] && break
         sleep 1
         COUNT=$((COUNT + 1))
     done
 
-    PID=$(get_pid)
-    if [ -n "$PID" ]; then
+    PID=$(get_pid || true)
+    if [ -n "$PID" ] && [ "$PID" != "$$" ]; then
         echo "Process still alive, sending SIGKILL..."
-        pkill -KILL -f "komodo-android-periphery" 2>/dev/null || true
+        kill -KILL "$PID" 2>/dev/null || true
     fi
 
     echo "Komodo Periphery stopped."

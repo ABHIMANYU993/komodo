@@ -351,15 +351,14 @@ magisk --install-module "$ZIP_DEST"
 mkdir -p "$KOMODO_DIR" "$KEYS_DIR" "$KOMODO_DIR/logs" "$KOMODO_DIR/backups"
 chmod 700 "$KOMODO_DIR" "$KEYS_DIR" "$KOMODO_DIR/logs" "$KOMODO_DIR/backups"
 
-# Install symlink for komodo-control
+# Install helper utility for komodo-control
+mkdir -p "$KOMODO_DIR/bin"
 if [ -f "$ACTIVE_MODDIR/komodo-control" ]; then
-    chmod 755 "$ACTIVE_MODDIR/komodo-control"
-    mkdir -p "$KOMODO_DIR/bin"
-    ln -sf "$ACTIVE_MODDIR/komodo-control" "$KOMODO_DIR/bin/komodo-control"
+    cp "$ACTIVE_MODDIR/komodo-control" "$KOMODO_DIR/bin/komodo-control"
+    chmod 755 "$KOMODO_DIR/bin/komodo-control"
 elif [ -f "$UPDATE_MODDIR/komodo-control" ]; then
-    chmod 755 "$UPDATE_MODDIR/komodo-control"
-    mkdir -p "$KOMODO_DIR/bin"
-    ln -sf "$UPDATE_MODDIR/komodo-control" "$KOMODO_DIR/bin/komodo-control"
+    cp "$UPDATE_MODDIR/komodo-control" "$KOMODO_DIR/bin/komodo-control"
+    chmod 755 "$KOMODO_DIR/bin/komodo-control"
 fi
 
 # Stage 6: Configuring Periphery Service (Task 9, 10)

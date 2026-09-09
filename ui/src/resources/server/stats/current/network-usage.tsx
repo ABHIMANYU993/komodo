@@ -1,7 +1,6 @@
 import { InfoCard } from "mogh_ui";
 import { Group, Stack, Text } from "@mantine/core";
 import { Types } from "komodo_client";
-import { fmtRateBytes } from "mogh_ui";
 
 export function formatNetworkRate(bytesPerSec: number): string {
   if (bytesPerSec >= 1024 * 1024 * 1024) {

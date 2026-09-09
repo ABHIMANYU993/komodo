@@ -118,8 +118,8 @@ su -c "nano /data/adb/modules/komodo-android-periphery/config/komodo-android-per
 Minimum config:
 
 ```toml
-core_address = "ws://192.168.31.80:9120"   # Your Komodo Core WS address
-server_name  = "Redmi Note 10 Pro"          # Name shown in Komodo UI
+core_address = "ws://192.168.x.x:9120"      # Your Komodo Core WS address (e.g. ws://192.168.1.100:9120)
+server_name  = "Android-Device"            # Name shown in Komodo UI (e.g. Pixel-7 or Android-Device)
 ```
 
 Reload the daemon:
@@ -170,13 +170,14 @@ export ANDROID_NDK_HOME=/path/to/android-ndk
 ```
 
 ### Docker Images (CI handles this automatically)
+Images are built and pushed to GHCR automatically via the GitHub Actions workflow. For local builds:
 
 ```bash
 # Build core image locally
-docker build -f Dockerfile.core -t ghcr.io/abhimanyu993/komodo-core:local .
+docker build -f bin/core/aio.Dockerfile -t ghcr.io/abhimanyu993/komodo-core:local .
 
 # Build periphery image locally
-docker build -f Dockerfile.periphery -t ghcr.io/abhimanyu993/komodo-periphery:local .
+docker build -f bin/periphery/aio.Dockerfile -t ghcr.io/abhimanyu993/komodo-periphery:local .
 ```
 
 ---

@@ -24,11 +24,9 @@ WORKDIR /android-periphery
 # Copy the pre-built aarch64 binary (staged by CI into dist/ before docker build)
 COPY dist/komodo-android-periphery ./komodo-android-periphery
 
-# Copy Magisk module scaffolding
+# Copy Magisk module scaffolding (includes config.toml.example, scripts, module.prop)
 COPY magisk/ ./magisk/
-
-# Copy example config
-COPY config.toml.example ./config.toml.example
+RUN cp ./magisk/config.toml.example ./config.toml.example
 
 RUN chmod +x ./komodo-android-periphery
 

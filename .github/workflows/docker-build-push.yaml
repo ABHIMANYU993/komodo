@@ -51,6 +51,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
@@ -72,25 +80,29 @@ jobs:
             echo "version=2.4.0" >> $GITHUB_OUTPUT
           fi
 
-      - name: Build binaries image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: bin/binaries.Dockerfile
-          push: true
-          # Single arch (amd64) — fast, no QEMU needed
-          platforms: linux/amd64
-          build-args: |
-            VERSION=${{ steps.ver.outputs.version }}
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.OWNER }}/komodo-binaries:${{ steps.ver.outputs.version }}
-            ${{ env.REGISTRY }}/${{ env.OWNER }}/komodo-binaries:2
-          cache-from: type=gha,scope=binaries
-          cache-to: type=gha,mode=max,scope=binaries
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+      - name: Compile Rust binaries (core, periphery, km)
+        run: |
+          cargo build --release -p komodo_core -p komodo_periphery -p komodo_cli
+          strip target/release/core target/release/periphery target/release/km
+
+      - name: Build and push komodo-binaries image
+        run: |
+          mkdir -p .binaries-ctx
+          cp target/release/core target/release/periphery target/release/km .binaries-ctx/
+          cat > .binaries-ctx/Dockerfile <<'EOF'
+          FROM scratch
+          COPY core /core
+          COPY periphery /periphery
+          COPY km /km
+          LABEL org.opencontainers.image.source="https://github.com/moghtech/komodo"
+          LABEL org.opencontainers.image.description="Komodo Binaries"
+          LABEL org.opencontainers.image.licenses="GPL-3.0"
+          EOF
+          docker buildx build \
+            --platform linux/amd64 \
+            -t ${{ env.REGISTRY }}/${{ env.OWNER }}/komodo-binaries:${{ steps.ver.outputs.version }} \
+            -t ${{ env.REGISTRY }}/${{ env.OWNER }}/komodo-binaries:2 \
+            --push .binaries-ctx
 
   # ─────────────────────────────────────────────────────────────
   # JOB 2: Build komodo-core image

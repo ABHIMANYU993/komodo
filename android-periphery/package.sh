@@ -2,7 +2,25 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-NDK_BIN="${ANDROID_NDK_HOME:-/home/icebyte/work/android-ndk-r26d}/toolchains/llvm/prebuilt/linux-x86_64/bin"
+
+# Resolve NDK llvm toolchain directory
+if [ -n "${ANDROID_NDK_HOME:-}" ] && [ -d "$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin" ]; then
+    NDK_BIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
+elif [ -n "${ANDROID_NDK_ROOT:-}" ] && [ -d "$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin" ]; then
+    NDK_BIN="$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64/bin"
+elif [ -d "/home/icebyte/work/android-ndk-r26d/toolchains/llvm/prebuilt/linux-x86_64/bin" ]; then
+    NDK_BIN="/home/icebyte/work/android-ndk-r26d/toolchains/llvm/prebuilt/linux-x86_64/bin"
+else
+    # Fallback to search in PATH
+    CLANG_PATH="$(command -v aarch64-linux-android33-clang || true)"
+    if [ -n "$CLANG_PATH" ]; then
+        NDK_BIN="$(dirname "$CLANG_PATH")"
+    else
+        echo "Error: Android NDK toolchain not found. Set ANDROID_NDK_HOME." >&2
+        exit 1
+    fi
+fi
+
 TARGET="aarch64-linux-android"
 RELEASE_BIN="$SCRIPT_DIR/target/$TARGET/release/komodo-android-periphery"
 DIST_DIR="$SCRIPT_DIR/dist"
@@ -13,7 +31,10 @@ ZIP_CANONICAL="komodo-android-periphery.zip"
 ZIP_VERSIONED="komodo-android-periphery-v${VERSION}.zip"
 
 echo "=== 1. Building release binary for $TARGET (v${VERSION}) ==="
-export PATH="$HOME/.cargo/bin:$NDK_BIN:$PATH"
+export PATH="$NDK_BIN:$HOME/.cargo/bin:$PATH"
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android33-clang"
+export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$NDK_BIN/llvm-ar"
+
 cd "$SCRIPT_DIR"
 cargo build --release --target "$TARGET"
 

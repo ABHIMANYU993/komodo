@@ -81,20 +81,30 @@ if [ $NON_INTERACTIVE -eq 0 ] && [ -t 0 ]; then
 fi
 
 echo "1. Stopping Komodo Android Periphery daemon..."
-pkill -TERM -f "komodo-android-periphery" 2>/dev/null || true
+for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true) $(pgrep -f "/data/adb/modules.*/komodo-android-periphery" 2>/dev/null || true); do
+    if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+        kill -TERM "$pid" 2>/dev/null || true
+    fi
+done
 COUNT=0
 while [ $COUNT -lt 5 ]; do
-    if ! pgrep -f "komodo-android-periphery" >/dev/null 2>&1; then
-        break
-    fi
+    STILL_RUNNING=0
+    for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true) $(pgrep -f "/data/adb/modules.*/komodo-android-periphery" 2>/dev/null || true); do
+        if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+            STILL_RUNNING=1
+            break
+        fi
+    done
+    [ $STILL_RUNNING -eq 0 ] && break
     sleep 1
     COUNT=$((COUNT + 1))
 done
 
-if pgrep -f "komodo-android-periphery" >/dev/null 2>&1; then
-    echo "Sending SIGKILL to remaining processes..."
-    pkill -KILL -f "komodo-android-periphery" 2>/dev/null || true
-fi
+for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true) $(pgrep -f "/data/adb/modules.*/komodo-android-periphery" 2>/dev/null || true); do
+    if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+        kill -KILL "$pid" 2>/dev/null || true
+    fi
+done
 
 echo "2. Removing Magisk module files..."
 # If active module exists, create remove flag for Magisk or remove directory

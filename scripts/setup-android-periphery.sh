@@ -336,8 +336,12 @@ if [ $IS_UPGRADE -eq 1 ]; then
     log_info "Created rollback backup at $BACKUP_DIR"
 fi
 
-# Stop running daemon before updating module
-pkill -TERM -f "komodo-android-periphery" 2>/dev/null || true
+# Stop running daemon before updating module (avoid self-kill)
+for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true) $(pgrep -f "/data/adb/modules.*/komodo-android-periphery" 2>/dev/null || true); do
+    if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+        kill -TERM "$pid" 2>/dev/null || true
+    fi
+done
 sleep 1
 
 # Supported Magisk installation command

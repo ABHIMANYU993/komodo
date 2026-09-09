@@ -81,15 +81,15 @@ if [ $NON_INTERACTIVE -eq 0 ] && [ -t 0 ]; then
 fi
 
 echo "1. Stopping Komodo Android Periphery daemon..."
-for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true) $(pgrep -f "/data/adb/modules.*/komodo-android-periphery" 2>/dev/null || true); do
+for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true) $(pgrep -f "/data/adb/modules.*/komodo-android-periphery" 2>/dev/null || true) $(pgrep -f "komodo-control" 2>/dev/null || true); do
     if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
-        kill -TERM "$pid" 2>/dev/null || true
+        kill -15 "$pid" 2>/dev/null || true
     fi
 done
 COUNT=0
 while [ $COUNT -lt 5 ]; do
     STILL_RUNNING=0
-    for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true) $(pgrep -f "/data/adb/modules.*/komodo-android-periphery" 2>/dev/null || true); do
+    for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true) $(pgrep -f "/data/adb/modules.*/komodo-android-periphery" 2>/dev/null || true) $(pgrep -f "komodo-control" 2>/dev/null || true); do
         if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
             STILL_RUNNING=1
             break
@@ -102,7 +102,7 @@ done
 
 for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true) $(pgrep -f "/data/adb/modules.*/komodo-android-periphery" 2>/dev/null || true) $(pgrep -f "komodo-control" 2>/dev/null || true); do
     if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
-        kill -KILL "$pid" 2>/dev/null || true
+        kill -9 "$pid" 2>/dev/null || true
     fi
 done
 

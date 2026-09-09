@@ -1,8 +1,7 @@
 target/
-dist/
-*.md
 src/
 Cargo.toml
 Cargo.lock
 package.sh
 .cargo/
+# dist/ is intentionally NOT excluded — CI stages the binary there before docker build

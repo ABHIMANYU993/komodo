@@ -21,8 +21,8 @@ ARG VERSION="2.4.0"
 
 WORKDIR /android-periphery
 
-# Copy the pre-built aarch64 binary
-COPY target/aarch64-linux-android/release/komodo-android-periphery ./komodo-android-periphery
+# Copy the pre-built aarch64 binary (staged by CI into dist/ before docker build)
+COPY dist/komodo-android-periphery ./komodo-android-periphery
 
 # Copy Magisk module scaffolding
 COPY magisk/ ./magisk/

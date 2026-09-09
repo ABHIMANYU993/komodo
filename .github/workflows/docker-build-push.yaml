@@ -254,6 +254,17 @@ jobs:
           EOF
           cargo build --release --target aarch64-linux-android
 
+      - name: Stage binary into build context
+        run: |
+          # Copy the compiled aarch64 binary into android-periphery/dist/
+          # so the Dockerfile can COPY it from within its own directory context
+          mkdir -p android-periphery/dist
+          cp android-periphery/target/aarch64-linux-android/release/komodo-android-periphery \
+             android-periphery/dist/komodo-android-periphery
+          chmod +x android-periphery/dist/komodo-android-periphery
+          echo "Binary staged:"
+          ls -lh android-periphery/dist/
+
       - name: Build and push komodo-android-periphery image
         uses: docker/build-push-action@v6
         with:
@@ -272,3 +283,4 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.version=${{ steps.ver.outputs.version }}
+

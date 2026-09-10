@@ -1,6 +1,7 @@
 #!/bin/sh
 # Komodo Linux Periphery Installer & Lifecycle Manager
-# Supports systemd, OpenRC (Alpine Linux), Docker, and Podman
+# Strictly installs Periphery as a native system service (systemd, OpenRC, SysVinit, runit, s6, dinit)
+# NO container fallback (Docker/Podman). Zero host mutations.
 # Repository: https://github.com/ABHIMANYU993/komodo
 
 set -e
@@ -13,7 +14,10 @@ ACTION="install"
 ROOT_DIR="/etc/komodo"
 FORCE=0
 PURGE=0
-DOCKER_IMAGE="ghcr.io/abhimanyu993/komodo-periphery:2"
+VERSION="v2.4.0"
+BIN_URL=""
+BIN_PATH_OVERRIDE=""
+GITHUB_REPO="ABHIMANYU993/komodo"
 
 # ANSI Colors
 RED='\033[0;31m'
@@ -31,17 +35,18 @@ log_err() { printf "${RED}%s${NC}\n" "$1" >&2; }
 print_help() {
     cat <<EOF
 Komodo Linux Periphery Installer & Lifecycle Manager
+Strictly installs Komodo Periphery as a native host system service.
 
 Usage:
   setup-periphery.sh [ACTION] [OPTIONS]
 
 Actions:
   --install                 Install or configure Periphery (default)
-  --reinstall               Fresh reinstall: wipe keys and re-onboard
+  --reinstall               Fresh reinstall: wipe keys, re-download, and re-onboard
   --reconfig                Update configuration (Core address, node name) and restart
   --restart                 Restart running Periphery service
-  --status                  Show current running status
-  --uninstall               Uninstall Periphery service and binary/container
+  --status                  Show current running status of the Periphery service
+  --uninstall               Uninstall Periphery service and binary
   --purge                   Used with --uninstall to remove /etc/komodo completely
 
 Options:
@@ -50,8 +55,19 @@ Options:
   --connect-as=<name>       Server identifier name (defaults to hostname)
   --polling-rate=<rate>     Stats polling rate (default: 1-sec)
   --root-directory=<path>   Periphery root directory (default: /etc/komodo)
+  --version=<tag>           Release tag to install (default: v2.4.0)
+  --binary-url=<url>        Direct URL to precompiled periphery binary
+  --binary-path=<path>      Local file path to precompiled periphery binary
   --force                   Force reinstall even if already running
   -h, --help                Show this help message
+
+Supported Service Managers:
+  - systemd      (/etc/systemd/system/periphery.service)
+  - OpenRC       (/etc/init.d/periphery)
+  - SysVinit     (/etc/init.d/periphery)
+  - runit        (/etc/sv/periphery -> /var/service/periphery)
+  - s6 / s6-rc   (/var/service/periphery or /etc/s6/services/periphery)
+  - dinit        (/etc/dinit.d/periphery)
 
 Examples:
   # Install via curl:
@@ -88,6 +104,12 @@ while [ $# -gt 0 ]; do
         --polling-rate|--stats-polling-rate) POLLING_RATE="$2"; shift ;;
         --root-directory=*) ROOT_DIR="${1#*=}" ;;
         --root-directory) ROOT_DIR="$2"; shift ;;
+        --version=*) VERSION="${1#*=}" ;;
+        --version) VERSION="$2"; shift ;;
+        --binary-url=*) BIN_URL="${1#*=}" ;;
+        --binary-url) BIN_URL="$2"; shift ;;
+        --binary-path=*) BIN_PATH_OVERRIDE="${1#*=}" ;;
+        --binary-path) BIN_PATH_OVERRIDE="$2"; shift ;;
         --force) FORCE=1 ;;
         -h|--help) print_help; exit 0 ;;
         *) log_err "Unknown option: $1"; print_help; exit 1 ;;
@@ -97,86 +119,228 @@ done
 
 # Root check
 if [ "$(id -u 2>/dev/null || echo 1)" -ne 0 ]; then
-    log_err "Error: Root access is required. Run as root or with sudo."
+    log_err "Error: Root access is required to manage system services. Run as root or with sudo/doas."
     exit 1
 fi
 
+# Detect system service manager
 detect_init() {
     if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
         echo "systemd"
-    elif command -v rc-service >/dev/null 2>&1 || [ -f /sbin/openrc-run ] || [ -d /etc/init.d ]; then
+    elif command -v rc-service >/dev/null 2>&1 || [ -f /sbin/openrc-run ] || ([ -d /etc/init.d ] && [ -f /etc/inittab ] && grep -q "openrc" /etc/inittab 2>/dev/null); then
         echo "openrc"
-    elif command -v docker >/dev/null 2>&1; then
-        echo "docker"
-    elif command -v podman >/dev/null 2>&1; then
-        echo "podman"
+    elif command -v sv >/dev/null 2>&1 || [ -d /etc/runit ] || [ -d /var/service ]; then
+        echo "runit"
+    elif command -v s6-svc >/dev/null 2>&1 || command -v s6-rc >/dev/null 2>&1; then
+        echo "s6"
+    elif command -v dinitctl >/dev/null 2>&1 || [ -d /etc/dinit.d ]; then
+        echo "dinit"
+    elif [ -d /etc/init.d ] && (command -v update-rc.d >/dev/null 2>&1 || command -v chkconfig >/dev/null 2>&1 || command -v service >/dev/null 2>&1); then
+        echo "sysvinit"
     else
-        echo "generic"
+        echo "none"
     fi
 }
 
 INIT_SYS=$(detect_init)
-IS_ALPINE=0
-[ -f /etc/alpine-release ] && IS_ALPINE=1
 
-log_info "Detected Init / Environment: $INIT_SYS (Alpine: $IS_ALPINE)"
+if [ "$INIT_SYS" = "none" ]; then
+    log_err "=========================================================================="
+    log_err "ERROR: No supported system service manager detected on this host!"
+    log_err "Supported service managers: systemd, OpenRC, SysVinit, runit, s6, dinit."
+    log_err "Komodo Periphery must run as a native system service. Container fallback is disabled."
+    log_err "=========================================================================="
+    exit 1
+fi
+
+log_info "Detected Host Service Manager: $INIT_SYS"
+
+# Detect Libc
+detect_libc() {
+    if [ -f /etc/alpine-release ] || ldd --version 2>&1 | grep -iq musl || ls /lib/ld-musl-*.so* >/dev/null 2>&1 || ls /lib64/ld-musl-*.so* >/dev/null 2>&1; then
+        echo "musl"
+    else
+        echo "gnu"
+    fi
+}
+
+LIBC=$(detect_libc)
+log_info "Detected C Library (libc): $LIBC"
 
 CONFIG_FILE="$ROOT_DIR/periphery.config.toml"
 KEYS_DIR="$ROOT_DIR/keys"
+BIN_INSTALL_PATH="/usr/local/bin/periphery"
+
+# Download helper using curl or wget (never mutating host packages)
+download_to() {
+    _url="$1"
+    _dest="$2"
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "$_url" -o "$_dest"
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "$_dest" "$_url"
+    elif command -v busybox >/dev/null 2>&1 && busybox wget --help >/dev/null 2>&1; then
+        busybox wget -qO "$_dest" "$_url"
+    else
+        log_err "Error: Neither curl nor wget is available on this host."
+        log_err "Please ensure curl or wget is installed."
+        return 1
+    fi
+}
 
 # ACTION: Status
 if [ "$ACTION" = "status" ]; then
-    log_info "=== Komodo Periphery Status ==="
-    if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl status periphery || true
-    elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service periphery status || true
+    log_info "=== Komodo Periphery Service Status ($INIT_SYS) ==="
+    case "$INIT_SYS" in
+        systemd)
+            systemctl status periphery --no-pager || true
+            ;;
+        openrc)
+            rc-service periphery status || true
+            ;;
+        runit)
+            sv status periphery || true
+            ;;
+        s6)
+            s6-svstat /var/service/periphery 2>/dev/null || s6-svstat /etc/s6/services/periphery || true
+            ;;
+        dinit)
+            dinitctl status periphery || true
+            ;;
+        sysvinit)
+            /etc/init.d/periphery status || true
+            ;;
+    esac
+
+    echo ""
+    log_info "=== Binary & Config ==="
+    if [ -x "$BIN_INSTALL_PATH" ]; then
+        echo "Binary: $BIN_INSTALL_PATH ($("$BIN_INSTALL_PATH" --help 2>&1 | head -n 1 || echo "executable"))"
+    else
+        echo "Binary: NOT FOUND at $BIN_INSTALL_PATH"
     fi
-    if command -v docker >/dev/null 2>&1; then
-        docker ps -f name=komodo-periphery
-    fi
-    if command -v podman >/dev/null 2>&1; then
-        podman ps -f name=komodo-periphery
+    if [ -f "$CONFIG_FILE" ]; then
+        echo "Config: $CONFIG_FILE"
+        cat "$CONFIG_FILE"
+    else
+        echo "Config: NOT FOUND at $CONFIG_FILE"
     fi
     exit 0
 fi
 
+# ACTION: Stop Service
+stop_service() {
+    case "$INIT_SYS" in
+        systemd)
+            systemctl stop periphery 2>/dev/null || true
+            ;;
+        openrc)
+            rc-service periphery stop 2>/dev/null || true
+            ;;
+        runit)
+            sv stop periphery 2>/dev/null || true
+            ;;
+        s6)
+            s6-svc -d /var/service/periphery 2>/dev/null || s6-svc -d /etc/s6/services/periphery 2>/dev/null || true
+            ;;
+        dinit)
+            dinitctl stop periphery 2>/dev/null || true
+            ;;
+        sysvinit)
+            /etc/init.d/periphery stop 2>/dev/null || true
+            ;;
+    esac
+}
+
+# ACTION: Start Service
+start_service() {
+    case "$INIT_SYS" in
+        systemd)
+            systemctl daemon-reload
+            systemctl enable periphery 2>/dev/null || true
+            systemctl restart periphery
+            ;;
+        openrc)
+            chmod 755 /etc/init.d/periphery
+            rc-update add periphery default 2>/dev/null || true
+            rc-service periphery restart
+            ;;
+        runit)
+            chmod +x /etc/sv/periphery/run
+            if [ -d /var/service ] && [ ! -e /var/service/periphery ]; then
+                ln -sf /etc/sv/periphery /var/service/periphery
+            elif [ -d /run/runit/service ] && [ ! -e /run/runit/service/periphery ]; then
+                ln -sf /etc/sv/periphery /run/runit/service/periphery
+            fi
+            sv restart periphery 2>/dev/null || sv start periphery
+            ;;
+        s6)
+            s6-svc -u /var/service/periphery 2>/dev/null || s6-svc -u /etc/s6/services/periphery 2>/dev/null || true
+            ;;
+        dinit)
+            dinitctl start periphery 2>/dev/null || dinitctl restart periphery
+            ;;
+        sysvinit)
+            chmod 755 /etc/init.d/periphery
+            update-rc.d periphery defaults 2>/dev/null || chkconfig --add periphery 2>/dev/null || true
+            /etc/init.d/periphery restart
+            ;;
+    esac
+}
+
 # ACTION: Uninstall
 if [ "$ACTION" = "uninstall" ]; then
-    log_info "Uninstalling Komodo Periphery..."
-    if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl stop periphery 2>/dev/null || true
-        systemctl disable periphery 2>/dev/null || true
-        rm -f /etc/systemd/system/periphery.service
-        systemctl daemon-reload 2>/dev/null || true
-    elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service periphery stop 2>/dev/null || true
-        rc-update del periphery default 2>/dev/null || true
-        rm -f /etc/init.d/periphery
-    fi
-    command -v docker >/dev/null 2>&1 && docker rm -f komodo-periphery 2>/dev/null || true
-    command -v podman >/dev/null 2>&1 && podman rm -f komodo-periphery 2>/dev/null || true
-    rm -f /usr/local/bin/periphery
+    log_info "Uninstalling Komodo Periphery native service..."
+    stop_service
+    case "$INIT_SYS" in
+        systemd)
+            systemctl disable periphery 2>/dev/null || true
+            rm -f /etc/systemd/system/periphery.service
+            systemctl daemon-reload 2>/dev/null || true
+            ;;
+        openrc)
+            rc-update del periphery default 2>/dev/null || true
+            rm -f /etc/init.d/periphery
+            ;;
+        runit)
+            rm -f /var/service/periphery /run/runit/service/periphery
+            rm -rf /etc/sv/periphery
+            ;;
+        s6)
+            rm -rf /var/service/periphery /etc/s6/services/periphery
+            ;;
+        dinit)
+            rm -f /etc/dinit.d/periphery
+            ;;
+        sysvinit)
+            update-rc.d -f periphery remove 2>/dev/null || chkconfig --del periphery 2>/dev/null || true
+            rm -f /etc/init.d/periphery
+            ;;
+    esac
+
+    rm -f "$BIN_INSTALL_PATH"
+
     if [ $PURGE -eq 1 ]; then
         rm -rf "$ROOT_DIR"
         log_success "Komodo Periphery completely purged from system."
     else
-        log_success "Periphery service removed. Configuration preserved in $ROOT_DIR."
+        log_success "Periphery service and binary removed. Configuration preserved in $ROOT_DIR."
     fi
     exit 0
 fi
 
 # ACTION: Restart
 if [ "$ACTION" = "restart" ]; then
-    if [ "$INIT_SYS" = "systemd" ]; then
-        systemctl restart periphery
-    elif [ "$INIT_SYS" = "openrc" ]; then
-        rc-service periphery restart
-    else
-        command -v docker >/dev/null 2>&1 && docker restart komodo-periphery
-        command -v podman >/dev/null 2>&1 && podman restart komodo-periphery
-    fi
-    log_success "Restarted Periphery service."
+    log_info "Restarting Komodo Periphery service ($INIT_SYS)..."
+    case "$INIT_SYS" in
+        systemd) systemctl restart periphery ;;
+        openrc) rc-service periphery restart ;;
+        runit) sv restart periphery ;;
+        s6) s6-svc -r /var/service/periphery 2>/dev/null || s6-svc -r /etc/s6/services/periphery ;;
+        dinit) dinitctl restart periphery ;;
+        sysvinit) /etc/init.d/periphery restart ;;
+    esac
+    log_success "Periphery service restarted."
     exit 0
 fi
 
@@ -226,157 +390,215 @@ if [ -n "$ONBOARDING_KEY" ]; then
 fi
 chmod 600 "$CONFIG_FILE"
 
-# Deployment Implementation
-if [ "$IS_ALPINE" -eq 1 ] || [ "$INIT_SYS" = "openrc" ]; then
-    log_info "Configuring Periphery for Alpine Linux / OpenRC..."
-    if command -v docker >/dev/null 2>&1 || command -v podman >/dev/null 2>&1; then
-        RUNTIME="docker"
-        command -v podman >/dev/null 2>&1 && RUNTIME="podman"
-        
-        log_info "Deploying containerized Periphery via $RUNTIME..."
-        $RUNTIME rm -f komodo-periphery 2>/dev/null || true
-        
-        ONBOARD_ENV=""
-        [ -n "$ONBOARDING_KEY" ] && ONBOARD_ENV="-e PERIPHERY_ONBOARDING_KEY=$ONBOARDING_KEY"
-        
-        $RUNTIME run -d \
-            --name komodo-periphery \
-            --network host \
-            --restart unless-stopped \
-            -e PERIPHERY_CORE_ADDRESS="$CORE_ADDRESS" \
-            -e PERIPHERY_CONNECT_AS="$CONNECT_AS" \
-            $ONBOARD_ENV \
-            -e PERIPHERY_STATS_POLLING_RATE="$POLLING_RATE" \
-            -e PERIPHERY_INCLUDE_DISK_MOUNTS="$ROOT_DIR,/host,/" \
-            -v /var/run/docker.sock:/var/run/docker.sock:ro \
-            -v /proc:/proc:ro \
-            -v "$KEYS_DIR:/config/keys" \
-            -v "$ROOT_DIR:$ROOT_DIR" \
-            "$DOCKER_IMAGE"
+# Binary Installation
+ARCH_RAW=$(uname -m)
+case "$ARCH_RAW" in
+    x86_64|amd64) ARCH="x86_64" ;;
+    aarch64|arm64) ARCH="aarch64" ;;
+    armv7l|armhf) ARCH="armv7" ;;
+    *) ARCH="x86_64" ;;
+esac
 
-        # Create OpenRC service to track container state
-        cat > /etc/init.d/periphery <<EOF
-#!/sbin/openrc-run
-name="Komodo Periphery"
-description="Komodo Periphery Agent (Container)"
+install_binary() {
+    mkdir -p /usr/local/bin
 
-depend() {
-    need net $RUNTIME
-}
+    if [ -n "$BIN_PATH_OVERRIDE" ] && [ -f "$BIN_PATH_OVERRIDE" ]; then
+        log_info "Installing binary from local path: $BIN_PATH_OVERRIDE"
+        cp -f "$BIN_PATH_OVERRIDE" "$BIN_INSTALL_PATH"
+        chmod +x "$BIN_INSTALL_PATH"
+        return 0
+    fi
 
-start() {
-    ebegin "Starting Komodo Periphery"
-    $RUNTIME start komodo-periphery 2>/dev/null || $RUNTIME run -d \\
-        --name komodo-periphery \\
-        --network host \\
-        --restart unless-stopped \\
-        -e PERIPHERY_CORE_ADDRESS="$CORE_ADDRESS" \\
-        -e PERIPHERY_CONNECT_AS="$CONNECT_AS" \\
-        $ONBOARD_ENV \\
-        -e PERIPHERY_STATS_POLLING_RATE="$POLLING_RATE" \\
-        -e PERIPHERY_INCLUDE_DISK_MOUNTS="$ROOT_DIR,/host,/" \\
-        -v /var/run/docker.sock:/var/run/docker.sock:ro \\
-        -v /proc:/proc:ro \\
-        -v "$KEYS_DIR:/config/keys" \\
-        -v "$ROOT_DIR:$ROOT_DIR" \\
-        "$DOCKER_IMAGE"
-    eend \$?
-}
+    if [ -n "$BIN_URL" ]; then
+        log_info "Downloading binary from explicit URL: $BIN_URL"
+        download_to "$BIN_URL" "$BIN_INSTALL_PATH"
+        chmod +x "$BIN_INSTALL_PATH"
+        return 0
+    fi
 
-stop() {
-    ebegin "Stopping Komodo Periphery"
-    $RUNTIME stop komodo-periphery
-    eend \$?
-}
-EOF
-        chmod 755 /etc/init.d/periphery
-        rc-update add periphery default 2>/dev/null || true
+    # Determine binary candidates based on libc and architecture
+    # Static musl works everywhere (both Alpine and standard glibc Linux distros)
+    if [ "$LIBC" = "musl" ]; then
+        CANDIDATES="periphery-${ARCH}-musl periphery-${ARCH} periphery"
     else
-        log_err "Error: Alpine Linux uses musl libc and requires Docker or Podman to run the Periphery agent."
-        log_err "Please ensure Docker or Podman is installed and running on the host."
+        CANDIDATES="periphery-${ARCH} periphery-${ARCH}-musl periphery"
+    fi
+
+    INSTALLED=0
+    for CANDIDATE in $CANDIDATES; do
+        URL="https://github.com/${GITHUB_REPO}/releases/download/${VERSION}/${CANDIDATE}"
+        log_info "Attempting to download binary: $URL"
+        if download_to "$URL" "$BIN_INSTALL_PATH" 2>/dev/null && [ -s "$BIN_INSTALL_PATH" ]; then
+            chmod +x "$BIN_INSTALL_PATH"
+            # Verify execution
+            if "$BIN_INSTALL_PATH" --help >/dev/null 2>&1; then
+                log_success "Successfully installed and verified binary ($CANDIDATE)."
+                INSTALLED=1
+                break
+            else
+                log_warn "Binary $CANDIDATE failed compatibility check (missing symbols/dynamic linker). Trying alternative..."
+                rm -f "$BIN_INSTALL_PATH"
+            fi
+        fi
+    done
+
+    # Fallback to latest tag if versioned release download failed
+    if [ $INSTALLED -eq 0 ]; then
+        for CANDIDATE in $CANDIDATES; do
+            URL="https://github.com/${GITHUB_REPO}/releases/latest/download/${CANDIDATE}"
+            log_info "Attempting fallback download: $URL"
+            if download_to "$URL" "$BIN_INSTALL_PATH" 2>/dev/null && [ -s "$BIN_INSTALL_PATH" ]; then
+                chmod +x "$BIN_INSTALL_PATH"
+                if "$BIN_INSTALL_PATH" --help >/dev/null 2>&1; then
+                    log_success "Successfully installed and verified binary ($CANDIDATE) from latest."
+                    INSTALLED=1
+                    break
+                else
+                    rm -f "$BIN_INSTALL_PATH"
+                fi
+            fi
+        done
+    fi
+
+    if [ $INSTALLED -eq 0 ] && [ -x "$BIN_INSTALL_PATH" ]; then
+        log_info "Retaining currently installed binary at $BIN_INSTALL_PATH."
+        return 0
+    fi
+
+    if [ ! -x "$BIN_INSTALL_PATH" ]; then
+        log_err "Error: Failed to download or verify a compatible Komodo Periphery binary for $ARCH ($LIBC)."
+        log_err "You can specify a direct binary with --binary-url or --binary-path."
         exit 1
     fi
-elif [ "$INIT_SYS" = "systemd" ]; then
-    log_info "Configuring Periphery for systemd..."
-    systemctl stop periphery 2>/dev/null || true
+}
 
-    ARCH=$(uname -m)
-    case "$ARCH" in
-        x86_64|amd64) BIN_NAME="periphery-x86_64" ;;
-        aarch64|arm64) BIN_NAME="periphery-aarch64" ;;
-        *) BIN_NAME="periphery-x86_64" ;;
-    esac
+install_binary
 
-    BIN_PATH="/usr/local/bin/periphery"
-    DL_URL="https://github.com/moghtech/komodo/releases/download/v1.17.2/$BIN_NAME"
-    log_info "Downloading binary from $DL_URL..."
-    if command -v curl >/dev/null 2>&1; then
-        curl -fsSL "$DL_URL" -o "$BIN_PATH" || true
-    elif command -v wget >/dev/null 2>&1; then
-        wget -qO "$BIN_PATH" "$DL_URL" || true
-    fi
+# Stop any running instances prior to service update
+stop_service
 
-    # Fallback to docker container if binary download fails or binary crashes
-    if [ ! -s "$BIN_PATH" ] || ! chmod +x "$BIN_PATH" 2>/dev/null; then
-        if command -v docker >/dev/null 2>&1 || command -v podman >/dev/null 2>&1; then
-            log_warn "Binary unavailable; falling back to container deployment..."
-            RUNTIME="docker"
-            command -v podman >/dev/null 2>&1 && RUNTIME="podman"
-            $RUNTIME rm -f komodo-periphery 2>/dev/null || true
-            $RUNTIME run -d --name komodo-periphery --restart unless-stopped \
-                -e PERIPHERY_CORE_ADDRESS="$CORE_ADDRESS" \
-                -e PERIPHERY_CONNECT_AS="$CONNECT_AS" \
-                -e PERIPHERY_STATS_POLLING_RATE="$POLLING_RATE" \
-                -v /var/run/docker.sock:/var/run/docker.sock:ro \
-                -v /proc:/proc:ro \
-                -v "$ROOT_DIR:$ROOT_DIR" \
-                "$DOCKER_IMAGE"
-            exit 0
-        fi
-    fi
+# Generate Service Definitions
+log_info "Registering service for $INIT_SYS..."
 
-    # Systemd service file
-    cat > /etc/systemd/system/periphery.service <<EOF
+case "$INIT_SYS" in
+    systemd)
+        cat > /etc/systemd/system/periphery.service <<EOF
 [Unit]
 Description=Komodo Periphery Agent
 After=network.target
+Wants=network-online.target
 
 [Service]
-ExecStart=/usr/local/bin/periphery --config-path $CONFIG_FILE
+Type=simple
+ExecStart=$BIN_INSTALL_PATH --config-path $CONFIG_FILE
 Restart=always
 RestartSec=5
+LimitNOFILE=65536
 TimeoutStartSec=0
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target
 EOF
+        ;;
 
-    systemctl daemon-reload
-    systemctl enable periphery 2>/dev/null || true
-    systemctl restart periphery
-else
-    # Generic container fallback
-    if command -v docker >/dev/null 2>&1 || command -v podman >/dev/null 2>&1; then
-        RUNTIME="docker"
-        command -v podman >/dev/null 2>&1 && RUNTIME="podman"
-        $RUNTIME rm -f komodo-periphery 2>/dev/null || true
-        ONBOARD_ENV=""
-        [ -n "$ONBOARDING_KEY" ] && ONBOARD_ENV="-e PERIPHERY_ONBOARDING_KEY=$ONBOARDING_KEY"
-        $RUNTIME run -d --name komodo-periphery --network host --restart unless-stopped \
-            -e PERIPHERY_CORE_ADDRESS="$CORE_ADDRESS" \
-            -e PERIPHERY_CONNECT_AS="$CONNECT_AS" \
-            $ONBOARD_ENV \
-            -e PERIPHERY_STATS_POLLING_RATE="$POLLING_RATE" \
-            -e PERIPHERY_INCLUDE_DISK_MOUNTS="$ROOT_DIR,/host,/" \
-            -v /var/run/docker.sock:/var/run/docker.sock:ro \
-            -v /proc:/proc:ro \
-            -v "$KEYS_DIR:/config/keys" \
-            -v "$ROOT_DIR:$ROOT_DIR" \
-            "$DOCKER_IMAGE"
-    fi
-fi
+    openrc)
+        cat > /etc/init.d/periphery <<EOF
+#!/sbin/openrc-run
+name="Komodo Periphery"
+description="Komodo Periphery Agent"
+
+command="$BIN_INSTALL_PATH"
+command_args="--config-path $CONFIG_FILE"
+command_background="yes"
+pidfile="/run/periphery.pid"
+output_log="/var/log/periphery.log"
+error_log="/var/log/periphery.err"
+
+depend() {
+    need net
+    after firewall
+}
+EOF
+        ;;
+
+    runit)
+        mkdir -p /etc/sv/periphery
+        cat > /etc/sv/periphery/run <<EOF
+#!/bin/sh
+exec 2>&1
+exec $BIN_INSTALL_PATH --config-path $CONFIG_FILE
+EOF
+        ;;
+
+    s6)
+        mkdir -p /var/service/periphery
+        cat > /var/service/periphery/run <<EOF
+#!/bin/sh
+exec 2>&1
+exec $BIN_INSTALL_PATH --config-path $CONFIG_FILE
+EOF
+        chmod +x /var/service/periphery/run
+        ;;
+
+    dinit)
+        mkdir -p /etc/dinit.d
+        cat > /etc/dinit.d/periphery <<EOF
+type = process
+command = $BIN_INSTALL_PATH --config-path $CONFIG_FILE
+restart = yes
+smooth-recovery = yes
+logfile = /var/log/periphery.log
+EOF
+        ;;
+
+    sysvinit)
+        cat > /etc/init.d/periphery <<EOF
+#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          periphery
+# Required-Start:    \$network \$local_fs \$remote_fs
+# Required-Stop:     \$network \$local_fs \$remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Komodo Periphery Agent
+### END INIT INFO
+
+DAEMON=$BIN_INSTALL_PATH
+DAEMON_ARGS="--config-path $CONFIG_FILE"
+PIDFILE=/run/periphery.pid
+
+case "\$1" in
+    start)
+        echo "Starting Komodo Periphery..."
+        start-stop-daemon --start --background --make-pidfile --pidfile "\$PIDFILE" --exec "\$DAEMON" -- \$DAEMON_ARGS
+        ;;
+    stop)
+        echo "Stopping Komodo Periphery..."
+        start-stop-daemon --stop --pidfile "\$PIDFILE" --retry 5
+        rm -f "\$PIDFILE"
+        ;;
+    restart)
+        \$0 stop
+        sleep 1
+        \$0 start
+        ;;
+    status)
+        start-stop-daemon --status --pidfile "\$PIDFILE" && echo "Running" || echo "Stopped"
+        ;;
+    *)
+        echo "Usage: \$0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+EOF
+        ;;
+esac
+
+# Start Service
+start_service
 
 log_success "=========================================================="
 log_success "  SUCCESS: Komodo Periphery setup finished!"
+log_success "  Service Manager: $INIT_SYS"
 log_success "  Node '$CONNECT_AS' configured to connect to '$CORE_ADDRESS'."
 log_success "=========================================================="

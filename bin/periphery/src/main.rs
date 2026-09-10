@@ -10,6 +10,8 @@ use crate::{
 #[macro_use]
 extern crate tracing;
 
+use openssl as _;
+
 mod api;
 mod config;
 mod connection;

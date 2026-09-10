@@ -62,3 +62,4 @@ axum.workspace = true
 clap.workspace = true
 envy.workspace = true
 uuid.workspace = true
+openssl = { version = "0.10", features = ["vendored"] }

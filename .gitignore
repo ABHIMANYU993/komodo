@@ -10,3 +10,5 @@ deno.lock
 .idea
 .dev
 __pycache__/
+release-dist/
+.binaries-ctx/

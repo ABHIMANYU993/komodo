@@ -1,0 +1,9 @@
+target/
+android-periphery/target/
+android-periphery/dist/
+.binaries-ctx/
+.git/
+node_modules/
+ui/node_modules/
+client/core/ts/node_modules/
+client/periphery/ts/node_modules/

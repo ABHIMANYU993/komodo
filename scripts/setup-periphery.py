@@ -13,7 +13,7 @@ import platform
 import subprocess
 import urllib.request
 
-DEFAULT_VERSION = "v2.4.0"
+DEFAULT_VERSION = "v2.4.1"
 GITHUB_REPO = "ABHIMANYU993/komodo"
 
 def parse_args():

@@ -2,8 +2,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 
-pub const AGENT_VERSION: &str = "2.3.3";
-pub const PROTOCOL_COMPATIBILITY_VERSION: &str = "2.3.3";
+pub const AGENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const PROTOCOL_COMPATIBILITY_VERSION: &str = "2.4.1";
 pub const UPSTREAM_COMPATIBILITY_COMMIT: &str = "780ac68b992094a9fccd5fffb760e0c84fd3c3d1";
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

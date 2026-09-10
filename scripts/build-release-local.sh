@@ -8,7 +8,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CORES=$(nproc 2>/dev/null || echo 4)
-VERSION="${1:-v2.4.0}"
+VERSION="${1:-v2.4.1}"
 RELEASE_DIST="$ROOT_DIR/release-dist"
 
 echo "================================================================="
@@ -49,7 +49,13 @@ if [ -d "/home/icebyte/work/android-ndk-r26d/toolchains/llvm/prebuilt/linux-x86_
 fi
 
 cp "$ROOT_DIR/android-periphery/dist/komodo-android-periphery.zip" "$RELEASE_DIST/"
-cp "$ROOT_DIR/android-periphery/dist/komodo-android-periphery-v2.4.0.zip" "$RELEASE_DIST/" 2>/dev/null || true
+cp "$ROOT_DIR/android-periphery/dist/komodo-android-periphery-v${VERSION#v}.zip" "$RELEASE_DIST/" 2>/dev/null || true
+cp -f "$RELEASE_DIST/periphery-x86_64" "$RELEASE_DIST/periphery"
+
+# Compress core-x86_64 (106MB raw exceeds GitHub 100MB single-file limit)
+echo ">>> Compressing core-x86_64 into core-x86_64.tar.gz..."
+tar -czf "$RELEASE_DIST/core-x86_64.tar.gz" -C "$RELEASE_DIST" core-x86_64
+rm -f "$RELEASE_DIST/core-x86_64"
 
 # Compute Checksums
 cd "$RELEASE_DIST"

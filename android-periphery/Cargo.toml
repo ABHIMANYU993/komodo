@@ -2,7 +2,7 @@
 
 [package]
 name = "komodo-android-periphery"
-version = "2.4.0"
+version = "2.4.1"
 edition = "2024"
 license = "GPL-3.0-or-later"
 

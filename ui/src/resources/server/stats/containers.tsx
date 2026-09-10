@@ -39,6 +39,18 @@ export default function ServerContainerStats({ id }: { id: string }) {
         return 30_000;
       case Types.Timelength.OneMinute:
         return 60_000;
+      case Types.Timelength.FiveMinutes:
+        return 300_000;
+      case Types.Timelength.FifteenMinutes:
+        return 900_000;
+      case Types.Timelength.ThirtyMinutes:
+        return 1_800_000;
+      case Types.Timelength.OneHour:
+        return 3_600_000;
+      case Types.Timelength.SixHours:
+        return 21_600_000;
+      case Types.Timelength.OneDay:
+        return 86_400_000;
       default:
         return 15_000;
     }
@@ -79,6 +91,11 @@ export default function ServerContainerStats({ id }: { id: string }) {
               Types.Timelength.ThirtySeconds,
               Types.Timelength.OneMinute,
               Types.Timelength.FiveMinutes,
+              Types.Timelength.FifteenMinutes,
+              Types.Timelength.ThirtyMinutes,
+              Types.Timelength.OneHour,
+              Types.Timelength.SixHours,
+              Types.Timelength.OneDay,
             ]}
             w={120}
           />

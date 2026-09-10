@@ -54,6 +54,7 @@ fi
 # Launch daemon in background with supervisor watchdog
 # Daemon handles network delays, route changes, and reconnects asynchronously
 (
+    echo "$$" > "$KOMODO_DIR/daemon.pid"
     while true; do
         # Exit supervisor if module was disabled
         if [ -f "$MODDIR/disable" ]; then

@@ -176,6 +176,14 @@ impl Resolve<ReadArgs> for ListAllContainers {
   }
 }
 
+const CONTAINERS_EXPIRY: u128 = 800;
+type ContainersCache =
+  tokio::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<(Vec<ContainerListItem>, u128)>>>;
+fn containers_cache() -> &'static ContainersCache {
+  static CONTAINERS_CACHE: std::sync::OnceLock<ContainersCache> = std::sync::OnceLock::new();
+  CONTAINERS_CACHE.get_or_init(Default::default)
+}
+
 impl Resolve<ReadArgs> for ListContainers {
   async fn resolve(
     self,
@@ -187,14 +195,47 @@ impl Resolve<ReadArgs> for ListContainers {
       PermissionLevel::Read.into(),
     )
     .await?;
-    let cache = server_status_cache()
-      .get_or_insert_default(&server.id)
-      .await;
-    if let Some(docker) = &cache.docker {
-      Ok(docker.containers.clone())
-    } else {
-      Ok(Vec::new())
-    }
+
+    let mut lock = containers_cache().lock().await;
+    let now = async_timing_util::unix_timestamp_ms();
+    let res = match lock.get(&server.id) {
+      Some(cached) if cached.1 > now => cached.0.clone(),
+      _ => {
+        let resp = match periphery_client(&server).await {
+          Ok(client) => {
+            client
+              .request(periphery::poll::PollStatus {
+                include_stats: false,
+                include_docker: true,
+              })
+              .await
+          }
+          Err(e) => Err(e),
+        };
+        match resp {
+          Ok(poll_resp) => {
+            let containers =
+              poll_resp.docker.map(|d| d.containers).unwrap_or_default();
+            lock.insert(
+              server.id.clone(),
+              std::sync::Arc::new((containers.clone(), now + CONTAINERS_EXPIRY)),
+            );
+            containers
+          }
+          Err(_) => {
+            let cache = server_status_cache()
+              .get_or_insert_default(&server.id)
+              .await;
+            if let Some(docker) = &cache.docker {
+              docker.containers.clone()
+            } else {
+              Vec::new()
+            }
+          }
+        }
+      }
+    };
+    Ok(res)
   }
 }
 

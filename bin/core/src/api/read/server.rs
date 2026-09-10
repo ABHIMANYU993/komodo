@@ -20,7 +20,7 @@ use komodo_client::{
       Server, ServerActionState, ServerListItem, ServerSortBy,
       ServerState,
     },
-    stats::{MinimalSystemStats, SystemInformation, SystemProcess},
+    stats::{MinimalSystemStats, SystemInformation, SystemProcess, SystemStats},
   },
 };
 use mogh_error::AddStatusCode;
@@ -326,6 +326,14 @@ impl Resolve<ReadArgs> for GetSystemInformation {
   }
 }
 
+const SYSTEM_STATS_EXPIRY: u128 = 800;
+type SystemStatsCache =
+  Mutex<HashMap<String, Arc<(SystemStats, u128)>>>;
+fn system_stats_cache() -> &'static SystemStatsCache {
+  static STATS_CACHE: OnceLock<SystemStatsCache> = OnceLock::new();
+  STATS_CACHE.get_or_init(Default::default)
+}
+
 impl Resolve<ReadArgs> for GetSystemStats {
   async fn resolve(
     self,
@@ -337,15 +345,59 @@ impl Resolve<ReadArgs> for GetSystemStats {
       PermissionLevel::Read.into(),
     )
     .await?;
-    server_status_cache()
-      .get(&server.id)
-      .await
-      .context("Missing server status")?
-      .system_stats
-      .as_ref()
-      .cloned()
-      .context("Server status missing system stats. The Server may be disconnected.")
-      .status_code(StatusCode::INTERNAL_SERVER_ERROR)
+
+    let mut lock = system_stats_cache().lock().await;
+    let now = unix_timestamp_ms();
+    let res = match lock.get(&server.id) {
+      Some(cached) if cached.1 > now => cached.0.clone(),
+      _ => {
+        let stats_res = match periphery_client(&server).await {
+          Ok(client) => {
+            client
+              .request(periphery::poll::PollStatus {
+                include_stats: true,
+                include_docker: false,
+              })
+              .await
+          }
+          Err(e) => Err(e),
+        };
+        match stats_res {
+          Ok(poll_resp) => {
+            let stats = match poll_resp.system_stats {
+              Some(s) => s,
+              None => {
+                server_status_cache()
+                  .get(&server.id)
+                  .await
+                  .context("Missing server status")?
+                  .system_stats
+                  .as_ref()
+                  .cloned()
+                  .context("Server status missing system stats")?
+              }
+            };
+            lock.insert(
+              server.id.clone(),
+              Arc::new((stats.clone(), now + SYSTEM_STATS_EXPIRY)),
+            );
+            stats
+          }
+          Err(_) => {
+            server_status_cache()
+              .get(&server.id)
+              .await
+              .context("Missing server status")?
+              .system_stats
+              .as_ref()
+              .cloned()
+              .context("Server status missing system stats. The Server may be disconnected.")
+              .status_code(StatusCode::INTERNAL_SERVER_ERROR)?
+          }
+        }
+      }
+    };
+    Ok(res)
   }
 }
 

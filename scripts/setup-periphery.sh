@@ -44,6 +44,7 @@ Actions:
   --install                 Install or configure Periphery (default)
   --reinstall               Fresh reinstall: wipe keys, re-download, and re-onboard
   --reconfig                Update configuration (Core address, node name) and restart
+  --update, --upgrade       Update to latest periphery binary (preserves config & keys)
   --restart                 Restart running Periphery service
   --status                  Show current running status of the Periphery service
   --uninstall               Uninstall Periphery service and binary
@@ -90,6 +91,7 @@ while [ $# -gt 0 ]; do
         --install) ACTION="install" ;;
         --reinstall) ACTION="reinstall" ;;
         --reconfig|--update-config) ACTION="reconfig" ;;
+        --update|--upgrade) ACTION="update" ;;
         --restart) ACTION="restart" ;;
         --status) ACTION="status" ;;
         --uninstall) ACTION="uninstall" ;;
@@ -230,6 +232,7 @@ fi
 
 # ACTION: Stop Service
 stop_service() {
+    log_info "Gracefully stopping running periphery service/process..."
     case "$INIT_SYS" in
         systemd)
             systemctl stop periphery 2>/dev/null || true
@@ -250,6 +253,27 @@ stop_service() {
             /etc/init.d/periphery stop 2>/dev/null || true
             ;;
     esac
+
+    # Ensure all lingering periphery processes terminate gracefully and close sockets
+    for pid in $(pgrep -x "periphery" 2>/dev/null || true); do
+        if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    done
+
+    # Wait up to 4s for process termination and clean socket closure
+    for _i in 1 2 3 4; do
+        if ! pgrep -x "periphery" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+
+    # Force kill if still hung
+    if pgrep -x "periphery" >/dev/null 2>&1; then
+        kill -9 $(pgrep -x "periphery" 2>/dev/null) 2>/dev/null || true
+    fi
+    sleep 1
 }
 
 # ACTION: Start Service
@@ -332,16 +356,18 @@ fi
 # ACTION: Restart
 if [ "$ACTION" = "restart" ]; then
     log_info "Restarting Komodo Periphery service ($INIT_SYS)..."
-    case "$INIT_SYS" in
-        systemd) systemctl restart periphery ;;
-        openrc) rc-service periphery restart ;;
-        runit) sv restart periphery ;;
-        s6) s6-svc -r /var/service/periphery 2>/dev/null || s6-svc -r /etc/s6/services/periphery ;;
-        dinit) dinitctl restart periphery ;;
-        sysvinit) /etc/init.d/periphery restart ;;
-    esac
+    stop_service
+    start_service
     log_success "Periphery service restarted."
     exit 0
+fi
+
+# If updating or existing config present, auto-populate CORE_ADDRESS if omitted
+if [ -f "$CONFIG_FILE" ] && [ -z "$CORE_ADDRESS" ]; then
+    CORE_ADDRESS=$(grep '^core_address' "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' "' || true)
+    if [ -z "$CONNECT_AS" ]; then
+        CONNECT_AS=$(grep '^connect_as' "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' "' || true)
+    fi
 fi
 
 # Validation for install / reconfig
@@ -363,6 +389,9 @@ fi
 case "$POLLING_RATE" in
     [0-9]*) echo "$POLLING_RATE" | grep -q -- "-sec" || POLLING_RATE="${POLLING_RATE}-sec" ;;
 esac
+
+# Gracefully stop running periphery service before modifying keys, binary, or config
+stop_service
 
 if [ "$ACTION" = "reinstall" ]; then
     log_warn "Fresh reinstall requested. Purging previous authentication keys..."

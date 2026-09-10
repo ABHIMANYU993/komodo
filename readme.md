@@ -1,211 +1,172 @@
-# Komodo 🦎 — ABHIMANYU993 Fork (v2.4.0)
+# Komodo 🦎 — Real-Time Telemetry & Native Multi-Platform Infrastructure (v2.4.2)
 
-> **This is a custom fork of [moghtech/komodo](https://github.com/moghtech/komodo)** with major enhancements for **real-time monitoring** and **native Android deployment** via Magisk.
+> **High-performance, low-overhead monitoring and container management fork of [moghtech/komodo](https://github.com/moghtech/komodo)** with native system service agents for Linux, native ARM64 agents for rooted Android, on-demand telemetry sampling, and dynamic real-time UI polling rate controls.
 
 ---
 
-## What's New in v2.4.0
+## What's New in v2.4.2
 
 | Feature | Detail |
 |---|---|
-| 🤖 **Android Periphery** | Native `aarch64` binary. Runs on rooted Android via Magisk — no Docker needed |
-| ⚡ **1-Second Real-Time Stats** | CPU, RAM, disk, load average, and network all update every second |
-| 📊 **1s / 2s / 3s Historical Graphs** | Selectable granularity for telemetry history charts |
-| 🔄 **Process Refresh Dropdown** | Processes table update interval matches the dropdown you select (1s – 1day) |
-| 🌐 **Public IP in Header** | Android device's public/local IP is displayed in the dashboard header |
-| 🗄️ **Auto DB Retention (7 days)** | MongoDB stats and alerts auto-pruned weekly — no manual cleanup |
-| 📦 **Custom Docker Images** | `ghcr.io/abhimanyu993/komodo-core` and `ghcr.io/abhimanyu993/komodo-periphery` built from this repo |
+| 🎛️ **Dynamic Polling Rate Controls** | Live UI dropdown selectors on **Current Stats** (default `1-sec`), **Containers** (default `15-sec`), and **Processes** (default `5-sec`), selectable from `1s` to `1d`. Dynamic changes instantly drive Periphery polling without page refreshes. |
+| 🪶 **Cockpit / Beszel Telemetry Architecture** | Zero background procfs polling storms. Process inspection and container stats run **on-demand** with an 800ms coalescing cache, dropping idle daemon CPU to **~0.0%**. |
+| 🐧 **Native Linux Host Periphery Service** | One-command installer [`setup-periphery.sh`](scripts/setup-periphery.sh) with native support for **systemd, OpenRC, runit, s6, dinit, SysVinit**. Zero container overhead; static musl support for Alpine and glibc Linux. |
+| 🤖 **Native Android Periphery** | Standalone `aarch64` daemon via [`setup-android-periphery.sh`](scripts/setup-android-periphery.sh) for rooted Android devices (**Magisk v26+, KernelSU, APatch**). Zero-trust Noise XX encryption. |
+| 🛑 **Graceful Lifecycle & Re-onboarding** | Installers automatically detect active processes and gracefully terminate WebSocket connections before updating configs or keys, eliminating key conflicts and "Not OK" state. |
+| 🐳 **Optimized Container Inspection** | Zero child process spawning: Docker Compose project names and state are derived in-memory from container labels with no `docker compose ls` subprocess forks. |
+| 📱 **Qualcomm Snapdragon Core Normalization** | Hotplug detection and CPU metric clamping (`0.0..=100.0%`) to eliminate erroneous multi-thousand percent CPU utilization spikes on big.LITTLE architectures. |
+| 🚀 **Local Multi-Core Build Automation** | Parallelized local builds utilizing all available host CPU cores (`nproc`) to build binaries, package Magisk modules, and assemble multi-tagged Docker images. |
 
 ---
 
-## 🐳 Docker Deployment (Server / Linux)
+## ⚡ Quick Start & Helping Commands
+
+For a full reference of commands, see the dedicated [**Example Commands Guide (`example-commands.md`)**](example-commands.md).
+
+### 1. Deploy Linux Periphery (Host System Service)
+
+Runs as a native system service (systemd, OpenRC, runit, s6, dinit, SysVinit):
+
+```bash
+# Via curl:
+curl -fsSL https://raw.githubusercontent.com/ABHIMANYU993/komodo/main/scripts/setup-periphery.sh | sh -s -- \
+  --core-address="ws://192.168.31.100:9120" \
+  --connect-as="Alpine_VM" \
+  --onboarding-key="YOUR_ONBOARDING_KEY"
+
+# Via wget:
+wget -qO- https://raw.githubusercontent.com/ABHIMANYU993/komodo/main/scripts/setup-periphery.sh | sh -s -- \
+  --core-address="ws://192.168.31.100:9120" \
+  --connect-as="Ubuntu_Server" \
+  --onboarding-key="YOUR_ONBOARDING_KEY"
+```
+
+### 2. Deploy Android Periphery (Rooted Android / Magisk / KernelSU / APatch)
+
+Run in **Termux** (`su`), **ADB root shell**, or **SSH**:
+
+```bash
+# Via curl:
+curl -fsSL https://raw.githubusercontent.com/ABHIMANYU993/komodo/main/scripts/setup-android-periphery.sh | sh -s -- \
+  --core-address="ws://192.168.31.100:9120" \
+  --connect-as="Redmi_Note_10_Pro" \
+  --onboarding-key="YOUR_ONBOARDING_KEY"
+
+# Via wget:
+wget -qO- https://raw.githubusercontent.com/ABHIMANYU993/komodo/main/scripts/setup-android-periphery.sh | sh -s -- \
+  --core-address="ws://192.168.31.100:9120" \
+  --connect-as="Redmi_Note_10_Pro" \
+  --onboarding-key="YOUR_ONBOARDING_KEY"
+```
+
+### 3. Essential Lifecycle Commands
+
+| Action | Linux Periphery (`setup-periphery.sh`) | Android Periphery (`setup-android-periphery.sh`) |
+|---|---|---|
+| **Check Status** | `sh setup-periphery.sh --status` | `sh setup-android-periphery.sh --status` |
+| **Restart** | `sh setup-periphery.sh --restart` | `sh setup-android-periphery.sh --restart` |
+| **Update Binary** | `sh setup-periphery.sh --update` | `sh setup-android-periphery.sh --update` |
+| **Fresh Reinstall** | `sh setup-periphery.sh --reinstall --core-address=... --onboarding-key=...` | `sh setup-android-periphery.sh --reinstall --core-address=... --onboarding-key=...` |
+| **Reconfigure** | `sh setup-periphery.sh --reconfig --core-address=...` | `sh setup-android-periphery.sh --reconfig --core-address=...` |
+| **Uninstall** | `sh setup-periphery.sh --uninstall` | `sh setup-android-periphery.sh --uninstall` |
+| **Full Purge** | `sh setup-periphery.sh --uninstall --purge` | `sh setup-android-periphery.sh --uninstall --purge` |
+
+👉 *For more copy-pasteable commands and advanced options, read [`example-commands.md`](example-commands.md).*
+
+---
+
+## 🐳 Docker Deployment (Komodo Core Server)
 
 ### Prerequisites
-- Docker + Docker Compose v2
-- A Linux server (x86-64 or arm64)
+- Docker / Podman + Compose
+- Linux server (`x86_64` or `aarch64`)
 
 ### Quick Start
 
 ```bash
-# 1. Clone this repo
+# 1. Clone repository
 git clone https://github.com/ABHIMANYU993/komodo.git
 cd komodo
 
-# 2. Copy and configure the env file
+# 2. Configure environment
 cp compose/compose.env compose/.env.local
-# Edit .env.local — set passwords, KOMODO_HOST, etc.
 
-# 3. Deploy with MongoDB
+# 3. Deploy Core with MongoDB
 docker compose -f compose/mongo.compose.yaml --env-file compose/compose.env up -d
 ```
 
-The core dashboard will be available at **http://your-server-ip:9120**.
+Dashboard will be available at **http://your-server-ip:9120**.
 
-**Default login** (change immediately!):
+**Default Credentials**:
 - Username: `admin`
 - Password: `changeme`
 
-### Images Used
+### Container Images
 
-| Service | Image |
-|---|---|
-| Core | `ghcr.io/abhimanyu993/komodo-core:2` |
-| Periphery | `ghcr.io/abhimanyu993/komodo-periphery:2` |
-| MongoDB | `mongo` (official) |
-
-Images are automatically built and pushed to GHCR on every push to `main` and on every GitHub Release via the [docker-build-push workflow](.github/workflows/docker-build-push.yaml).
-
-### ENV File Reference
-
-The main env file is [`compose/compose.env`](compose/compose.env). Key variables:
-
-| Variable | Default | Description |
+| Service | Image | Description |
 |---|---|---|
-| `COMPOSE_KOMODO_IMAGE_TAG` | `2` | Docker image tag to pull |
-| `KOMODO_HOST` | `https://example.komodo.com` | Your public URL (used for OAuth / webhooks) |
-| `KOMODO_INIT_ADMIN_USERNAME` | `admin` | Initial admin username |
-| `KOMODO_INIT_ADMIN_PASSWORD` | `changeme` | Initial admin password — **change this!** |
-| `KOMODO_DATABASE_USERNAME` | `admin` | MongoDB username |
-| `KOMODO_DATABASE_PASSWORD` | `admin` | MongoDB password — **change this!** |
-| `KOMODO_MONITORING_INTERVAL` | `1-sec` | How often Core polls servers (1-sec for real-time) |
-| `PERIPHERY_STATS_POLLING_RATE` | `1-sec` | How often Periphery samples system stats |
-| `KOMODO_KEEP_STATS_FOR_DAYS` | `7` | Auto-prune stats older than N days |
-| `KOMODO_KEEP_ALERTS_FOR_DAYS` | `7` | Auto-prune alerts older than N days |
-| `KOMODO_JWT_SECRET` | `a_random_jwt_secret` | **Set a strong random value!** |
-| `KOMODO_WEBHOOK_SECRET` | `a_random_secret` | **Set a strong random value!** |
+| **Core** | `ghcr.io/abhimanyu993/komodo-core:latest` (`:2.4.2`, `:2`) | Core server, API resolvers, Web UI bundle |
+| **Periphery** | `ghcr.io/abhimanyu993/komodo-periphery:latest` (`:2.4.2`, `:2`) | Linux container periphery agent |
+| **Android Periphery** | `ghcr.io/abhimanyu993/komodo-android-periphery:latest` (`:2.4.2`, `:2`) | Distributable artifact container |
 
-### Upgrade
+---
 
-```bash
-# Pull latest images and restart
-docker compose -f compose/mongo.compose.yaml --env-file compose/compose.env pull
-docker compose -f compose/mongo.compose.yaml --env-file compose/compose.env up -d
+## 📐 Architecture Overview
+
+```
+┌──────────────────────────────────────┐
+│       Rooted Android Device          │
+│   (Magisk / KernelSU / APatch)       │
+│    komodo-android-periphery (aarch64)│
+│    - Noise XX mutual auth            │
+│    - On-demand proc & battery stats  │
+└──────────────────┬───────────────────┘
+                   │
+                   │ Outbound WebSocket (Encrypted)
+                   ▼
+┌──────────────────────────────────────┐            ┌──────────────────────────────────────┐
+│          Komodo Core (v2.4.2)        │            │        Linux Host / VM Node          │
+│   ghcr.io/abhimanyu993/komodo-core   │◀───────────│   (Alpine, Debian, Ubuntu, Arch)     │
+│   - Port 9120 (HTTP / WS)            │  WebSocket │   periphery (systemd/openrc service) │
+│   - Dynamic polling rate engine      │            │   - Zero container fallback          │
+│   - On-demand coalescing cache (800ms│            │   - Native cgroups & procfs          │
+│   - MongoDB backend                  │            └──────────────────────────────────────┘
+└──────────────────┬───────────────────┘
+                   │
+                   │ Web UI (Vite / React 19 / Mantine)
+                   ▼
+┌──────────────────────────────────────┐
+│         Browser Dashboard            │
+│   - Current Stats dropdown (1s-1d)   │
+│   - Containers dropdown (1s-1d)      │
+│   - Processes dropdown (1s-1d)       │
+└──────────────────────────────────────┘
 ```
 
 ---
 
-## 🤖 Android Periphery Deployment (Magisk)
+## 🔨 Multi-Core Building from Source
 
-The Android Periphery is a standalone native daemon that connects your **rooted Android phone** to Komodo Core as a monitored server.
-
-### Prerequisites
-- Rooted Android device (Magisk v26+)
-- Root shell access (`adb shell su` or Termux with root)
-- Network access from the phone to your Komodo Core server
-
-### Install via Magisk Module
+All binaries and images can be built locally using all available CPU threads:
 
 ```bash
-# Download the latest release package
-curl -L https://github.com/ABHIMANYU993/komodo/releases/latest/download/komodo-android-periphery.zip \
-     -o /sdcard/komodo-android-periphery.zip
+# Build release binaries (core, periphery, km, static musl) and container images
+./scripts/build-release-local.sh v2.4.2
 
-# Install via Magisk (preferred — survives updates cleanly)
-su -c "magisk --install-module /sdcard/komodo-android-periphery.zip"
-
-# Reboot to activate
-su -c "reboot"
-```
-
-### Post-Install Configuration
-
-After reboot, edit the config file:
-
-```bash
-su -c "nano /data/adb/modules/komodo-android-periphery/config/komodo-android-periphery.toml"
-```
-
-Minimum config:
-
-```toml
-core_address = "ws://192.168.x.x:9120"      # Your Komodo Core WS address (e.g. ws://192.168.1.100:9120)
-server_name  = "Android-Device"            # Name shown in Komodo UI (e.g. Pixel-7 or Android-Device)
-```
-
-Reload the daemon:
-
-```bash
-su -c "komodo-control restart"
-```
-
-### Control Commands
-
-```bash
-su -c "komodo-control status"    # Check if daemon is running
-su -c "komodo-control start"     # Start daemon
-su -c "komodo-control stop"      # Stop daemon
-su -c "komodo-control restart"   # Restart daemon
-su -c "komodo-control logs"      # View recent logs
-su -c "komodo-control uninstall" # Remove module + all files
-```
-
-### What is Monitored
-
-| Metric | Update Rate |
-|---|---|
-| CPU usage % | 1 second |
-| RAM used / total | 1 second |
-| Disk usage | 1 second |
-| Load average (1m/5m/15m) | 1 second |
-| Network ingress / egress | 1 second |
-| Process list (CPU/Mem per process) | Configurable (1s–1day) |
-| Public / local IP | Every 15 minutes |
-
----
-
-## 🔨 Building from Source
-
-### Android Periphery
-
-```bash
-# Install Rust + Android target
-rustup target add aarch64-linux-android
-
-# Setup NDK (set your NDK path)
-export ANDROID_NDK_HOME=/path/to/android-ndk
-
-# Build + package
+# Build Android Periphery & Magisk package only
 ./android-periphery/package.sh
-# Output: android-periphery/dist/komodo-android-periphery.zip
-```
-
-### Docker Images (CI handles this automatically)
-Images are built and pushed to GHCR automatically via the GitHub Actions workflow. For local builds:
-
-```bash
-# Build core image locally
-docker build -f bin/core/aio.Dockerfile -t ghcr.io/abhimanyu993/komodo-core:local .
-
-# Build periphery image locally
-docker build -f bin/periphery/aio.Dockerfile -t ghcr.io/abhimanyu993/komodo-periphery:local .
 ```
 
 ---
 
-## 📐 Architecture
+## 🔗 Documentation Links
 
-```
-┌─────────────────────────────┐      WebSocket
-│  Android Device (Magisk)    │─────────────────────────────────────┐
-│  komodo-android-periphery   │                                     │
-│  (aarch64 native binary)    │                                     ▼
-└─────────────────────────────┘              ┌────────────────────────────┐
-                                             │   Komodo Core              │
-┌─────────────────────────────┐   WebSocket  │   ghcr.io/abhimanyu993/   │
-│  Linux Server (Docker)      │─────────────▶│   komodo-core:2            │
-│  komodo-periphery container │             │                            │
-└─────────────────────────────┘             │   Port 9120 (HTTP + WS)    │
-                                             │   MongoDB backend          │
-                                             └────────────────────────────┘
-```
-
----
-
-## 🔗 Links
-
-- [Upstream Komodo docs](https://komo.do)
-- [Upstream GitHub (moghtech/komodo)](https://github.com/moghtech/komodo)
-- [This fork's releases](https://github.com/ABHIMANYU993/komodo/releases)
+- [Example Commands Guide (`example-commands.md`)](example-commands.md)
+- [Linux Periphery Installer Documentation](scripts/readme.md)
+- [Android Periphery Documentation](android-periphery/README.md)
+- [Core Architecture Guide](bin/core/README.md)
+- [Periphery Architecture Guide](bin/periphery/README.md)
+- [Upstream Komodo Documentation](https://komo.do)
 
 ---
 

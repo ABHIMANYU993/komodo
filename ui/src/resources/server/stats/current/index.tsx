@@ -49,6 +49,8 @@ export default function ServerCurrentStats({
                 Types.Timelength.FifteenMinutes,
                 Types.Timelength.ThirtyMinutes,
                 Types.Timelength.OneHour,
+                Types.Timelength.SixHours,
+                Types.Timelength.OneDay,
               ]}
               w={120}
             />

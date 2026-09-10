@@ -24,8 +24,8 @@ export default function ServerStats({
   const isServerAvailable = useIsServerAvailable(id);
 
   const [interval, setInterval] = useLocalStorage<Types.Timelength>({
-    key: "server-current-stats-interval-v1",
-    defaultValue: Types.Timelength.FiveSeconds,
+    key: "server-current-stats-interval-v2",
+    defaultValue: Types.Timelength.OneSecond,
   });
 
   const refetchInterval = useMemo(() => {
@@ -44,8 +44,20 @@ export default function ServerStats({
         return 30_000;
       case Types.Timelength.OneMinute:
         return 60_000;
+      case Types.Timelength.FiveMinutes:
+        return 300_000;
+      case Types.Timelength.FifteenMinutes:
+        return 900_000;
+      case Types.Timelength.ThirtyMinutes:
+        return 1_800_000;
+      case Types.Timelength.OneHour:
+        return 3_600_000;
+      case Types.Timelength.SixHours:
+        return 21_600_000;
+      case Types.Timelength.OneDay:
+        return 86_400_000;
       default:
-        return 5_000;
+        return 1_000;
     }
   }, [interval]);
 

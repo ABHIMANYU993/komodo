@@ -66,7 +66,7 @@ rm -f "$DIST_DIR/${ZIP_CANONICAL}.sha256" "$DIST_DIR/${ZIP_VERSIONED}.sha256"
 
 (cd "$MAGISK_BUILD_DIR" && zip -r "$DIST_DIR/$ZIP_CANONICAL" .)
 cp "$DIST_DIR/$ZIP_CANONICAL" "$DIST_DIR/$ZIP_VERSIONED"
-cp "$BINARY_TARGET" "$DIST_DIR/komodo-android-periphery"
+cp "$RELEASE_BIN" "$DIST_DIR/komodo-android-periphery"
 
 # Generate SHA256 checksums (pure checksum filename format)
 (cd "$DIST_DIR" && sha256sum "$ZIP_CANONICAL" > "${ZIP_CANONICAL}.sha256")

@@ -305,7 +305,16 @@ log_success "Root provider verified: $ROOT_PROVIDER"
 
 # Helper: stop all running daemon instances
 stop_daemon() {
-    log_info "Stopping running periphery daemon instances..."
+    log_info "Gracefully stopping running periphery daemon instances..."
+    if [ -f "$KOMODO_DIR/daemon.pid" ]; then
+        SUPERVISOR_PID=$(cat "$KOMODO_DIR/daemon.pid" 2>/dev/null || true)
+        if [ -n "$SUPERVISOR_PID" ] && [ "$SUPERVISOR_PID" != "$$" ]; then
+            kill -TERM "$SUPERVISOR_PID" 2>/dev/null || true
+            kill -9 "$SUPERVISOR_PID" 2>/dev/null || true
+        fi
+        rm -f "$KOMODO_DIR/daemon.pid" 2>/dev/null || true
+    fi
+
     for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) \
                $(pgrep -x "komodo-android-" 2>/dev/null || true) \
                $(pgrep -f "komodo-android-periphery" 2>/dev/null || true); do
@@ -313,6 +322,23 @@ stop_daemon() {
             kill -TERM "$pid" 2>/dev/null || true
         fi
     done
+
+    # Wait up to 4s for daemon to terminate and close WebSocket connection
+    for _i in 1 2 3 4; do
+        if ! pgrep -f "komodo-android-periphery" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+
+    # Force kill if still running
+    if pgrep -f "komodo-android-periphery" >/dev/null 2>&1; then
+        for pid in $(pgrep -f "komodo-android-periphery" 2>/dev/null || true); do
+            if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        done
+    fi
     sleep 1
 }
 
@@ -371,6 +397,7 @@ if [ "$ACTION" = "restart" ]; then
         exit 1
     fi
     (
+        echo "$$" > "$KOMODO_DIR/daemon.pid"
         while true; do
             if [ -x "$TARGET_BIN" ] && [ -f "$CONFIG_FILE" ]; then
                 "$TARGET_BIN" --config "$CONFIG_FILE" >> "$LOG_FILE" 2>&1
@@ -508,6 +535,9 @@ case "$CORE_ADDRESS" in
         CORE_ADDRESS="ws://${CORE_ADDRESS}"
         ;;
 esac
+
+# Gracefully stop running periphery daemon before modifying keys, config, or module files
+stop_daemon
 
 # Fresh reinstall resets keys
 if [ "$ACTION" = "reinstall" ]; then
@@ -700,6 +730,7 @@ else
 fi
 
 (
+    echo "$$" > "$KOMODO_DIR/daemon.pid"
     while true; do
         if [ -x "$TARGET_BIN" ] && [ -f "$CONFIG_FILE" ]; then
             echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] Starting komodo-android-periphery..." >> "$LOG_FILE"

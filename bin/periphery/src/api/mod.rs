@@ -211,7 +211,7 @@ impl Resolve<Args> for GetSystemProcesses {
     self,
     _: &Args,
   ) -> anyhow::Result<Vec<SystemProcess>> {
-    Ok(stats_client().read().await.get_processes())
+    Ok(stats_client().write().await.get_processes())
   }
 }
 

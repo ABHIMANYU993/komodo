@@ -1,6 +1,6 @@
 id=komodo-android-periphery
 name=Komodo Android Periphery
-version=2.4.1
-versionCode=20401
+version=2.4.2
+versionCode=20402
 author=ABHIMANYU993
 description=Native Komodo Periphery daemon for Android (Root/Magisk)

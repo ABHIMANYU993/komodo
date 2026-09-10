@@ -1,13 +1,15 @@
+use std::sync::OnceLock;
 use futures_util::FutureExt;
 use komodo_client::entities::{
   docker::DockerLists, server::PeripheryInformation,
 };
 use mogh_resolver::Resolve;
 use periphery_client::api::poll::{PollStatus, PollStatusResponse};
+use tokio::sync::Mutex;
 
 use crate::{
   config::periphery_config,
-  docker::{DockerClient, compose::list_compose_projects},
+  docker::{DockerClient, compose::compose_projects_from_containers},
   state::{
     docker_client, host_public_ip, periphery_keys, stats_client,
   },
@@ -59,9 +61,31 @@ async fn periphery_information() -> PeripheryInformation {
   }
 }
 
+struct CachedDockerLists {
+  data: DockerLists,
+  fetched_at: std::time::Instant,
+}
+
+fn docker_cache() -> &'static Mutex<Option<CachedDockerLists>> {
+  static DOCKER_CACHE: OnceLock<Mutex<Option<CachedDockerLists>>> =
+    OnceLock::new();
+  DOCKER_CACHE.get_or_init(Default::default)
+}
+
 async fn docker_lists(client: &DockerClient) -> DockerLists {
+  let mut lock = docker_cache().lock().await;
+  let now = std::time::Instant::now();
+  if let Some(cached) = lock.as_ref() {
+    // Cache for 10s to eliminate container / network / volume polling storms
+    if now.duration_since(cached.fetched_at).as_secs() < 10 {
+      return cached.data.clone();
+    }
+  }
+
   let containers = client.list_containers().await.unwrap_or_default();
-  let (networks, images, volumes, projects) = tokio::join!(
+  // Extract compose projects natively from container labels without spawning external CLI process
+  let projects = compose_projects_from_containers(&containers);
+  let (networks, images, volumes) = tokio::join!(
     client
       .list_networks(&containers)
       .map(Result::unwrap_or_default),
@@ -71,13 +95,20 @@ async fn docker_lists(client: &DockerClient) -> DockerLists {
     client
       .list_volumes(&containers)
       .map(Result::unwrap_or_default),
-    list_compose_projects().map(Result::unwrap_or_default),
   );
-  DockerLists {
+
+  let lists = DockerLists {
     containers,
     networks,
     images,
     volumes,
     projects,
-  }
+  };
+
+  *lock = Some(CachedDockerLists {
+    data: lists.clone(),
+    fetched_at: now,
+  });
+
+  lists
 }

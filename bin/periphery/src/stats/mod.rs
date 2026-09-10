@@ -41,6 +41,9 @@ pub struct StatsClient {
   system: sysinfo::System,
   disks: sysinfo::Disks,
   networks: sysinfo::Networks,
+  cached_procs: Vec<SystemProcess>,
+  last_procs_refresh: Option<std::time::Instant>,
+  last_disk_refresh: Option<std::time::Instant>,
 }
 
 const BYTES_PER_GB: f64 = 1073741824.0;
@@ -62,6 +65,9 @@ impl Default for StatsClient {
       disks,
       networks,
       stats,
+      cached_procs: Vec::new(),
+      last_procs_refresh: None,
+      last_disk_refresh: None,
     }
   }
 }
@@ -70,12 +76,16 @@ impl StatsClient {
   fn refresh(&mut self) {
     self.system.refresh_cpu_all();
     self.system.refresh_memory();
-    self.system.refresh_processes_specifics(
-      ProcessesToUpdate::All,
-      true,
-      ProcessRefreshKind::everything().without_tasks(),
-    );
-    self.disks.refresh(true);
+    // Throttle disk statvfs to every 3s to eliminate unnecessary I/O
+    let now = std::time::Instant::now();
+    if self
+      .last_disk_refresh
+      .map(|t| now.duration_since(t).as_secs() >= 3)
+      .unwrap_or(true)
+    {
+      self.disks.refresh(true);
+      self.last_disk_refresh = Some(now);
+    }
     self.networks.refresh(true);
   }
 
@@ -156,7 +166,18 @@ impl StatsClient {
       .collect()
   }
 
-  pub fn get_processes(&self) -> Vec<SystemProcess> {
+  pub fn get_processes(&mut self) -> Vec<SystemProcess> {
+    let now = std::time::Instant::now();
+    if let Some(last) = self.last_procs_refresh {
+      if now.duration_since(last).as_millis() < 800 {
+        return self.cached_procs.clone();
+      }
+    }
+    self.system.refresh_processes_specifics(
+      ProcessesToUpdate::All,
+      true,
+      ProcessRefreshKind::everything().without_tasks(),
+    );
     let mut procs: Vec<_> = self
       .system
       .processes()
@@ -192,6 +213,8 @@ impl StatsClient {
         Ordering::Greater
       }
     });
+    self.cached_procs = procs.clone();
+    self.last_procs_refresh = Some(now);
     procs
   }
 }

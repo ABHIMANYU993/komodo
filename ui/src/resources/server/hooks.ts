@@ -46,14 +46,14 @@ export function useIsServerAvailable(id: string) {
   return useServer(id)?.info.state === Types.ServerState.Ok;
 }
 
-export function useServerStats(id: string) {
+export function useServerStats(id: string, refetchInterval: number = 5_000) {
   const isServerAvailable = useIsServerAvailable(id);
   return useRead(
     "GetSystemStats",
     { server: id },
     {
       enabled: isServerAvailable,
-      refetchInterval: 1_000,
+      refetchInterval,
     },
   ).data;
 }

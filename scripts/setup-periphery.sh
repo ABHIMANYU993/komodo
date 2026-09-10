@@ -14,7 +14,7 @@ ACTION="install"
 ROOT_DIR="/etc/komodo"
 FORCE=0
 PURGE=0
-VERSION="v2.4.1"
+VERSION="v2.4.2"
 BIN_URL=""
 BIN_PATH_OVERRIDE=""
 GITHUB_REPO="ABHIMANYU993/komodo"
@@ -55,7 +55,7 @@ Options:
   --connect-as=<name>       Server identifier name (defaults to hostname)
   --polling-rate=<rate>     Stats polling rate (default: 1-sec)
   --root-directory=<path>   Periphery root directory (default: /etc/komodo)
-  --version=<tag>           Release tag to install (default: v2.4.1)
+  --version=<tag>           Release tag to install (default: v2.4.2)
   --binary-url=<url>        Direct URL to precompiled periphery binary
   --binary-path=<path>      Local file path to precompiled periphery binary
   --force                   Force reinstall even if already running

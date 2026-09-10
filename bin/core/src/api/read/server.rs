@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, anyhow};
 use async_timing_util::{
-  FIFTEEN_SECONDS_MS, get_timelength_in_ms, unix_timestamp_ms,
+  get_timelength_in_ms, unix_timestamp_ms,
 };
 use database::mungos::{
   find::find_collect,
@@ -350,8 +350,8 @@ impl Resolve<ReadArgs> for GetSystemStats {
 }
 
 // Short cache allows dynamic UI polling rates (e.g. 1-sec, 2-sec, 5-sec) to fetch fresh stats
-// while still coalescing burst requests within 500ms
-const PROCESSES_EXPIRY: u128 = 500;
+// while still coalescing burst requests within 800ms
+const PROCESSES_EXPIRY: u128 = 800;
 type ProcessesCache =
   Mutex<HashMap<String, Arc<(Vec<SystemProcess>, u128)>>>;
 fn processes_cache() -> &'static ProcessesCache {

@@ -25,11 +25,52 @@ use proc::ProcessCollector;
 use storage::StorageCollector;
 use thermal::ThermalCollector;
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone)]
 pub struct TelemetrySnapshot {
     pub stats: SystemStats,
-    pub processes: Vec<SystemProcess>,
     pub public_ip: Option<String>,
+    pub proc_collector: Arc<tokio::sync::Mutex<(ProcessCollector, Option<std::time::Instant>, Vec<SystemProcess>)>>,
+}
+
+impl Default for TelemetrySnapshot {
+    fn default() -> Self {
+        Self {
+            stats: SystemStats::default(),
+            public_ip: None,
+            proc_collector: Arc::new(tokio::sync::Mutex::new((
+                ProcessCollector::new(),
+                None,
+                Vec::new(),
+            ))),
+        }
+    }
+}
+
+impl std::fmt::Debug for TelemetrySnapshot {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TelemetrySnapshot")
+            .field("stats", &self.stats)
+            .field("public_ip", &self.public_ip)
+            .finish()
+    }
+}
+
+impl TelemetrySnapshot {
+    /// On-demand process collection with 800ms cache.
+    /// This avoids scanning /proc on Android during normal idle telemetry while supporting dynamic 1s UI polling.
+    pub async fn get_processes(&self) -> Vec<SystemProcess> {
+        let mut lock = self.proc_collector.lock().await;
+        let now = std::time::Instant::now();
+        if let Some(last) = lock.1 {
+            if now.duration_since(last).as_millis() < 800 {
+                return lock.2.clone();
+            }
+        }
+        let procs = lock.0.collect();
+        lock.1 = Some(now);
+        lock.2 = procs.clone();
+        procs
+    }
 }
 
 pub struct TelemetryEngine {
@@ -65,6 +106,8 @@ impl TelemetryEngine {
         tokio::spawn(async move {
             let mut cpu_collector = CpuCollector::new();
             let mut net_collector = NetworkCollector::new();
+            let mut last_disk_check = std::time::Instant::now();
+            let mut cached_disks = StorageCollector::collect();
 
             loop {
                 // Read CPU
@@ -87,8 +130,11 @@ impl TelemetryEngine {
                 // Read Load Average
                 let load_avg = Self::read_load_average();
 
-                // Read Disks / Storage (fast statvfs call)
-                let disks = StorageCollector::collect();
+                // Refresh Disks / Storage only every 30 seconds to avoid statvfs overhead
+                if last_disk_check.elapsed().as_secs() >= 30 {
+                    cached_disks = StorageCollector::collect();
+                    last_disk_check = std::time::Instant::now();
+                }
 
                 // Update cache with unified timestamps
                 {
@@ -110,7 +156,7 @@ impl TelemetryEngine {
                     lock.stats.network_ingress_bytes = total_ingress;
                     lock.stats.network_egress_bytes = total_egress;
                     lock.stats.load_average = load_avg;
-                    lock.stats.disks = disks;
+                    lock.stats.disks = cached_disks.clone();
                     lock.stats.polling_rate = rate_str.clone();
                     lock.stats.refresh_ts = now_ms;
                     lock.stats.refresh_list_ts = now_ms;
@@ -120,27 +166,18 @@ impl TelemetryEngine {
             }
         });
 
-        // 2. PROCESSES & HARDWARE SENSORS LOOP
-        let cache_med = self.cache.clone();
-        let proc_interval = polling_duration.max(Duration::from_millis(1000));
+        // 2. HARDWARE SENSORS LOOP (conservative 10s sampling for battery/thermals)
         tokio::spawn(async move {
-            let mut proc_collector = ProcessCollector::new();
             let battery_collector = BatteryCollector::new();
             let thermal_collector = ThermalCollector::new();
             let gpu_collector = GpuCollector::new();
 
             loop {
-                let procs = proc_collector.collect();
                 let _batt = battery_collector.collect();
                 let _thermal = thermal_collector.collect();
                 let _gpu = gpu_collector.collect();
 
-                {
-                    let mut lock = cache_med.write().await;
-                    lock.processes = procs;
-                }
-
-                tokio::time::sleep(proc_interval).await;
+                tokio::time::sleep(Duration::from_secs(10)).await;
             }
         });
 

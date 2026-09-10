@@ -1,6 +1,6 @@
 target/
 android-periphery/target/
-android-periphery/dist/
+# android-periphery/dist/
 .binaries-ctx/
 .git/
 node_modules/

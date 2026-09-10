@@ -15,6 +15,7 @@ pub fn docker_compose() -> &'static str {
   }
 }
 
+#[allow(dead_code)]
 pub async fn list_compose_projects()
 -> anyhow::Result<Vec<ComposeProject>> {
   let docker_compose = docker_compose();
@@ -57,6 +58,52 @@ pub async fn list_compose_projects()
   });
 
   Ok(res)
+}
+
+/// Natively extracts ComposeProject metadata directly from inspected container labels.
+/// This avoids spawning 'docker compose ls' external processes in high-frequency monitoring loops.
+pub fn compose_projects_from_containers(
+  containers: &[komodo_client::entities::docker::container::ContainerListItem],
+) -> Vec<ComposeProject> {
+  let mut map: std::collections::HashMap<
+    String,
+    (Option<String>, std::collections::BTreeSet<String>),
+  > = std::collections::HashMap::new();
+
+  for c in containers {
+    if let Some(project) = c.labels.get("com.docker.compose.project") {
+      if project.is_empty() {
+        continue;
+      }
+      let entry = map.entry(project.clone()).or_insert_with(|| {
+        (c.status.clone(), std::collections::BTreeSet::new())
+      });
+      if let Some(config_files) =
+        c.labels.get("com.docker.compose.project.config_files")
+      {
+        for file in config_files.split(',') {
+          let trimmed = file.trim();
+          if !trimmed.is_empty() {
+            entry.1.insert(trimmed.to_string());
+          }
+        }
+      }
+    }
+  }
+
+  let mut res = map
+    .into_iter()
+    .map(|(name, (status, files))| ComposeProject {
+      name,
+      status,
+      compose_files: files.into_iter().collect(),
+    })
+    .collect::<Vec<_>>();
+
+  res.sort_by(|a, b| {
+    a.status.cmp(&b.status).then_with(|| a.name.cmp(&b.name))
+  });
+  res
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

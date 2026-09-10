@@ -2,14 +2,15 @@ import { useRead } from "@/lib/hooks";
 import { DataTable, SortableHeader } from "mogh_ui";
 import { Section } from "mogh_ui";
 import { ShowHideButton } from "mogh_ui";
-import { Group, Text } from "@mantine/core";
+import { Group, Select, Text } from "@mantine/core";
 import { useLocalStorage } from "@mantine/hooks";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { filterBySplit } from "mogh_ui";
 import DockerResourceLink from "@/components/docker/link";
 import { useIsServerAvailable } from "../hooks";
 import { SearchInput } from "mogh_ui";
 import { ICONS } from "@/lib/icons";
+import { Types } from "komodo_client";
 
 export default function ServerContainerStats({ id }: { id: string }) {
   const [search, setSearch] = useState("");
@@ -17,6 +18,32 @@ export default function ServerContainerStats({ id }: { id: string }) {
     key: "server-stats-containers-show-v2",
     defaultValue: true,
   });
+  const [interval, setInterval] = useLocalStorage<Types.Timelength>({
+    key: "server-containers-interval-v1",
+    defaultValue: Types.Timelength.FifteenSeconds,
+  });
+
+  const refetchInterval = useMemo(() => {
+    switch (interval) {
+      case Types.Timelength.OneSecond:
+        return 1_000;
+      case Types.Timelength.TwoSeconds:
+        return 2_000;
+      case Types.Timelength.ThreeSeconds:
+        return 3_000;
+      case Types.Timelength.FiveSeconds:
+        return 5_000;
+      case Types.Timelength.FifteenSeconds:
+        return 15_000;
+      case Types.Timelength.ThirtySeconds:
+        return 30_000;
+      case Types.Timelength.OneMinute:
+        return 60_000;
+      default:
+        return 15_000;
+    }
+  }, [interval]);
+
   const isServerAvailable = useIsServerAvailable(id);
   const containers = useRead(
     "ListContainers",
@@ -25,6 +52,7 @@ export default function ServerContainerStats({ id }: { id: string }) {
     },
     {
       enabled: isServerAvailable && show,
+      refetchInterval,
     },
   ).data?.filter((c) => c.stats);
   const filtered = filterBySplit(
@@ -38,11 +66,26 @@ export default function ServerContainerStats({ id }: { id: string }) {
       title="Containers"
       icon={<ICONS.Container size="1.3rem" />}
       titleRight={
-        <Group ml={{ sm: "xl" }}>
+        <Group ml={{ sm: "xl" }} onClick={(e) => e.stopPropagation()}>
+          <Select
+            value={interval}
+            onChange={(val) => val && setInterval(val as Types.Timelength)}
+            data={[
+              Types.Timelength.OneSecond,
+              Types.Timelength.TwoSeconds,
+              Types.Timelength.ThreeSeconds,
+              Types.Timelength.FiveSeconds,
+              Types.Timelength.FifteenSeconds,
+              Types.Timelength.ThirtySeconds,
+              Types.Timelength.OneMinute,
+              Types.Timelength.FiveMinutes,
+            ]}
+            w={120}
+          />
           <SearchInput
             value={search}
             onSearch={setSearch}
-            w={{ base: 200, lg: 300 }}
+            w={{ base: 180, lg: 240 }}
           />
           <ShowHideButton show={show} setShow={setShow} />
         </Group>

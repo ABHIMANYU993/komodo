@@ -318,7 +318,8 @@ impl CoreConnectionLoop {
             }
             PeripheryRequest::GetSystemProcesses => {
                 let snapshot = telemetry.read().await;
-                if let Ok(frame) = PeripheryResponse::ok(channel, &snapshot.processes) {
+                let processes = snapshot.get_processes().await;
+                if let Ok(frame) = PeripheryResponse::ok(channel, &processes) {
                     let _ = tx.send(frame).await;
                 }
             }

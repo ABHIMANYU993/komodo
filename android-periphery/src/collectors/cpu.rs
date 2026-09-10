@@ -99,10 +99,13 @@ impl CpuCollector {
         })
     }
 
-    /// Compute differential percentage between two snapshots.
+    /// Compute differential percentage between two snapshots with safety bounds against hotplug resets.
     pub fn calculate_utilization(prev: &CpuRawSnapshot, current: &CpuRawSnapshot) -> f32 {
         let prev_total = prev.total();
         let curr_total = current.total();
+        if curr_total <= prev_total {
+            return 0.0;
+        }
         let total_delta = curr_total.saturating_sub(prev_total);
 
         let prev_busy = prev.busy();
@@ -112,7 +115,8 @@ impl CpuCollector {
         if total_delta == 0 {
             0.0
         } else {
-            ((busy_delta as f64 / total_delta as f64) * 100.0) as f32
+            let pct = (busy_delta as f64 / total_delta as f64) * 100.0;
+            (pct.clamp(0.0, 100.0)) as f32
         }
     }
 

@@ -34,6 +34,7 @@ echo "=== 1. Building release binary for $TARGET (v${VERSION}) ==="
 export PATH="$NDK_BIN:$HOME/.cargo/bin:$PATH"
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER="$NDK_BIN/aarch64-linux-android33-clang"
 export CARGO_TARGET_AARCH64_LINUX_ANDROID_AR="$NDK_BIN/llvm-ar"
+export CC_aarch64_linux_android="$NDK_BIN/aarch64-linux-android33-clang"
 
 cd "$SCRIPT_DIR"
 cargo build --release --target "$TARGET"
@@ -65,6 +66,7 @@ rm -f "$DIST_DIR/${ZIP_CANONICAL}.sha256" "$DIST_DIR/${ZIP_VERSIONED}.sha256"
 
 (cd "$MAGISK_BUILD_DIR" && zip -r "$DIST_DIR/$ZIP_CANONICAL" .)
 cp "$DIST_DIR/$ZIP_CANONICAL" "$DIST_DIR/$ZIP_VERSIONED"
+cp "$BINARY_TARGET" "$DIST_DIR/komodo-android-periphery"
 
 # Generate SHA256 checksums (pure checksum filename format)
 (cd "$DIST_DIR" && sha256sum "$ZIP_CANONICAL" > "${ZIP_CANONICAL}.sha256")

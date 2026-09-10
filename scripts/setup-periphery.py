@@ -1,28 +1,34 @@
+#!/usr/bin/env python3
 import argparse
 import sys
 import os
 import shutil
 import platform
+import subprocess
 import json
 import urllib.request
+
+DEFAULT_VERSION = "2"
+CONFIG_TEMPLATE_URL = "https://raw.githubusercontent.com/ABHIMANYU993/komodo/main/config/periphery.config.toml"
+DOCKER_IMAGE = "ghcr.io/abhimanyu993/komodo-periphery:2"
 
 def parse_args():
 	p = argparse.ArgumentParser(
 		prog="setup-periphery",
-		description="Install systemd-managed Komodo Periphery",
+		description="Install and manage Komodo Periphery on systemd, OpenRC, or Docker",
 		formatter_class=argparse.ArgumentDefaultsHelpFormatter,
 	)
 
 	p.add_argument(
 		"--version", "-v",
-		default=json.load(urllib.request.urlopen("https://api.github.com/repos/moghtech/komodo/releases/latest"))["tag_name"],
-		help="Install a specific Komodo version, like 'v2.0.0'"
+		default=DEFAULT_VERSION,
+		help="Install a specific Komodo version/tag"
 	)
 
 	p.add_argument(
 		"--user", "-u",
 		action="store_true",
-		help="Install systemd '--user' service"
+		help="Install systemd '--user' service (systemd only)"
 	)
 
 	p.add_argument(
@@ -33,7 +39,7 @@ def parse_args():
 
 	p.add_argument(
 		"--core-address", "-c",
-		help="Specify the Komodo Core address for outbound connection. Leave blank to enable inbound connection server."
+		help="Specify the Komodo Core address (e.g. ws://192.168.31.100:9120)."
 	)
 
 	p.add_argument(
@@ -48,13 +54,50 @@ def parse_args():
 	)
 
 	p.add_argument(
+		"--polling-rate",
+		default="1-sec",
+		help="Stats polling interval (1-sec, 2-sec, 5-sec, etc.)"
+	)
+
+	p.add_argument(
+		"--container",
+		action="store_true",
+		help="Force installation via Docker/Podman container"
+	)
+
+	p.add_argument(
+		"--reinstall",
+		action="store_true",
+		help="Reset keys and re-onboard freshly"
+	)
+
+	p.add_argument(
+		"--reconfig",
+		action="store_true",
+		help="Reconfigure core address and node name without reinstalling"
+	)
+
+	p.add_argument(
+		"--uninstall",
+		action="store_true",
+		help="Uninstall Periphery and service"
+	)
+
+	p.add_argument(
+		"--status",
+		action="store_true",
+		help="Show current running status"
+	)
+
+	p.add_argument(
 		"--force-service-file",
-		help="Recreate the systemd service file even if it already exists."
+		action="store_true",
+		help="Recreate the service file even if it already exists."
 	)
 
 	p.add_argument(
 		"--config-url",
-		default="https://raw.githubusercontent.com/moghtech/komodo/refs/heads/main/config/periphery.config.toml",
+		default=CONFIG_TEMPLATE_URL,
 		help="Use a custom config url."
 	)
 
@@ -72,194 +115,318 @@ def parse_args():
 
 	return p.parse_args()
 
-def load_paths(args):
-	home_dir = os.environ['HOME']
-	if args.user:
+def detect_init():
+	if shutil.which("systemctl") is not None and os.path.exists("/run/systemd/system/"):
+		return "systemd"
+	if shutil.which("rc-service") is not None or os.path.exists("/sbin/openrc-run"):
+		return "openrc"
+	if shutil.which("docker") is not None:
+		return "docker"
+	if shutil.which("podman") is not None:
+		return "podman"
+	return "generic"
+
+def is_alpine():
+	return os.path.exists("/etc/alpine-release")
+
+def load_paths(args, init_sys):
+	home_dir = os.environ.get('HOME', '/root')
+	if args.user and init_sys == "systemd":
 		return [
-			# home_dir
 			home_dir,
-			# binary location
 			f'{home_dir}/.local/bin',
-			# config location
-	 		f'{home_dir}/.config/komodo',
-			# service file location
-	 		f'{home_dir}/.config/systemd/user',
+			f'{home_dir}/.config/komodo',
+			f'{home_dir}/.config/systemd/user',
 		]
 	else:
+		service_dir = "/etc/systemd/system" if init_sys == "systemd" else "/etc/init.d"
 		return [
-			# home_dir
 			home_dir,
-			# binary location
 			"/usr/local/bin",
-			# config location
-	 		"/etc/komodo",
-			# service file location
-	 		"/etc/systemd/system",
+			"/etc/komodo",
+			service_dir,
 		]
-
-def download_binary(args, bin_dir):
-	# stop periphery in case its currently in use
-	user = ""
-	if args.user:
-		user = " --user"
-	os.popen(f'systemctl{user} stop periphery')
-
-	# ensure bin_dir exists
-	if not os.path.isdir(bin_dir):
-		os.makedirs(bin_dir)
-
-	# delete binary if it already exists
-	bin_path = f'{bin_dir}/periphery'
-	if os.path.isfile(bin_path):
-		os.remove(bin_path)
-
-	periphery_bin = "periphery-x86_64"
-	arch = platform.machine().lower()
-	if arch == "aarch64" or arch == "arm64":
-		print("aarch64 detected")
-		periphery_bin = "periphery-aarch64"
-	else:
-		print("using x86_64 binary")
-
-	# download the binary to bin path
-	if os.system(f'curl -f -sSL {args.binary_url}/{args.version}/{periphery_bin} -o {bin_path}') != 0:
-		raise RuntimeError(
-			f"Failed to download binary from "
-			f"{args.binary_url}/{args.version}/{periphery_bin}"
-			f"\n\nDid you provide a valid tag for '--version'? Check here for valid version tags:"
-			f"\nhttps://github.com/moghtech/komodo/tags"
-		)
-
-	# add executable permissions
-	os.popen(f'chmod +x {bin_path}')
 
 def map_config_line(args, home_dir, line):
-	## Handle root directory
 	if line.startswith("root_directory ="):
-		if args.root_directory != None:
+		if args.root_directory is not None:
 			return f'root_directory = "{args.root_directory}"'
 		if args.user:
 			return f'root_directory = "{home_dir}/komodo"'
-	## Handle core_address
-	if line.startswith("# core_address =") and args.core_address != None:
+	if line.startswith("# core_address =") and args.core_address is not None:
 		return f'core_address = "{args.core_address}"'
-	## Handle connect_as
 	if line.startswith("# connect_as ="):
 		return f'connect_as = "{args.connect_as}"'
-	## Handle onboarding key
-	if line.startswith("# onboarding_key =") and args.onboarding_key != None:
+	if line.startswith("# onboarding_key =") and args.onboarding_key is not None:
 		return f'onboarding_key = "{args.onboarding_key}"'
-	## Handle core public keys
 	if line.startswith("# core_public_keys =") and args.core_public_keys:
 		return f'core_public_keys = "{args.core_public_keys}"'
+	if line.startswith("stats_polling_rate ="):
+		return f'stats_polling_rate = "{args.polling_rate}"'
 	return line
 
 def write_config(args, home_dir, config_dir):
 	config_file = f'{config_dir}/periphery.config.toml'
-
-	# early return if config file already exists
-	if os.path.isfile(config_file):
-		print(f'Config at {config_file} already exists, skipping...')
-		return
-
-	print(f'creating config at {config_file}')
-
-	# ensure config dir exists
+	if os.path.isfile(config_file) and not args.reinstall and not args.reconfig:
+		print(f'Config at {config_file} already exists, updating if needed...')
+	
+	print(f'Writing config at {config_file}')
 	if not os.path.isdir(config_dir):
-		os.makedirs(config_dir)
+		os.makedirs(config_dir, exist_ok=True)
 
-	template = urllib.request.urlopen(args.config_url).read().decode("utf-8").split("\n")
-	lines = [map_config_line(args, home_dir, line) for line in template]
-	config = "\n".join(lines)
+	try:
+		req = urllib.request.Request(args.config_url, headers={'User-Agent': 'KomodoInstaller/2.0'})
+		template = urllib.request.urlopen(req, timeout=10).read().decode("utf-8").split("\n")
+		lines = [map_config_line(args, home_dir, line) for line in template]
+		config = "\n".join(lines)
+	except Exception:
+		# Fallback static config
+		config = f'''# Komodo Periphery Configuration
+core_address = "{args.core_address or ''}"
+connect_as = "{args.connect_as}"
+root_directory = "{config_dir}"
+stats_polling_rate = "{args.polling_rate}"
+'''
+		if args.onboarding_key:
+			config += f'onboarding_key = "{args.onboarding_key}"\n'
 
 	with open(config_file, "w", encoding="utf-8", newline="\n") as f:
 		f.write(config)
+	os.chmod(config_file, 0o600)
 
-def write_service_file(args, home_dir, bin_dir, config_dir, service_dir):
+def install_openrc_service(args, config_dir, use_docker=False):
+	service_file = "/etc/init.d/periphery"
+	print(f"Creating OpenRC service at {service_file}...")
+	runtime = "podman" if shutil.which("podman") and not shutil.which("docker") else "docker"
+	keys_dir = f"{config_dir}/keys"
+	onboard_env = f'-e PERIPHERY_ONBOARDING_KEY="{args.onboarding_key}" \\' if args.onboarding_key else ''
+	
+	if use_docker:
+		content = f'''#!/sbin/openrc-run
+name="Komodo Periphery (Container)"
+description="Komodo Periphery Agent running in {runtime}"
+
+depend() {{
+	need net {runtime}
+}}
+
+start() {{
+	ebegin "Starting Komodo Periphery container"
+	{runtime} start komodo-periphery 2>/dev/null || {runtime} run -d \\
+		--name komodo-periphery \\
+		--network host \\
+		--restart unless-stopped \\
+		-e PERIPHERY_CORE_ADDRESS="{args.core_address}" \\
+		-e PERIPHERY_CONNECT_AS="{args.connect_as}" \\
+		{onboard_env}
+		-e PERIPHERY_STATS_POLLING_RATE="{args.polling_rate}" \\
+		-e PERIPHERY_INCLUDE_DISK_MOUNTS="{config_dir},/host,/" \\
+		-v /var/run/docker.sock:/var/run/docker.sock:ro \\
+		-v /proc:/proc:ro \\
+		-v {keys_dir}:/config/keys \\
+		-v {config_dir}:{config_dir} \\
+		{DOCKER_IMAGE}
+	eend $?
+}}
+
+stop() {{
+	ebegin "Stopping Komodo Periphery container"
+	{runtime} stop komodo-periphery
+	eend $?
+}}
+'''
+	else:
+		content = f'''#!/sbin/openrc-run
+name="Komodo Periphery"
+description="Agent to connect with Komodo Core"
+command="/usr/local/bin/periphery"
+command_args="--config-path {config_dir}/periphery.config.toml"
+command_background="yes"
+pidfile="/run/periphery.pid"
+
+depend() {{
+	need net
+	after firewall
+}}
+'''
+	with open(service_file, "w", encoding="utf-8", newline="\n") as f:
+		f.write(content)
+	os.chmod(service_file, 0o755)
+
+	os.system("rc-update add periphery default 2>/dev/null || true")
+	os.system("rc-service periphery restart 2>/dev/null || rc-service periphery start 2>/dev/null || true")
+	print("Periphery OpenRC service registered and started.")
+
+def install_systemd_service(args, home_dir, bin_dir, config_dir, service_dir):
 	service_file = f'{service_dir}/periphery.service'
-
-	if args.force_service_file:
-		print("forcing service file recreation")
-
-	# early return is service file already exists
-	if os.path.isfile(service_file):
-		if args.force_service_file:
-			print("deleting existing service file")
-			os.remove(service_file)
-		else:
-			print(f'service file already exists at {service_file}, skipping...')
-			return
-	
-	print(f'creating service file at {service_file}')
-	
-	# ensure service_dir exists
 	if not os.path.isdir(service_dir):
-		os.makedirs(service_dir)
+		os.makedirs(service_dir, exist_ok=True)
 
-	f = open(service_file, "x")
-	f.write((
+	print(f'Creating systemd service at {service_file}')
+	content = (
 		"[Unit]\n"
 		"Description=Agent to connect with Komodo Core\n"
+		"After=network.target\n"
 		"\n"
 		"[Service]\n"
 		f'Environment="HOME={home_dir}"\n'
 		f'ExecStart=/bin/sh -lc "{bin_dir}/periphery --config-path {config_dir}/periphery.config.toml"\n'
-		"Restart=on-failure\n"
+		"Restart=always\n"
+		"RestartSec=5\n"
 		"TimeoutStartSec=0\n"
 		"\n"
 		"[Install]\n"
-		"WantedBy=default.target"
-	))
+		"WantedBy=default.target\n"
+	)
+	with open(service_file, "w", encoding="utf-8", newline="\n") as f:
+		f.write(content)
 
-	user = ""
-	if args.user:
-		user = " --user"
-	os.popen(f'systemctl{user} daemon-reload')
+	user = " --user" if args.user else ""
+	os.system(f'systemctl{user} daemon-reload')
+	os.system(f'systemctl{user} enable periphery 2>/dev/null || true')
+	os.system(f'systemctl{user} restart periphery 2>/dev/null || systemctl{user} start periphery 2>/dev/null || true')
+	print("Periphery systemd service registered and started.")
 
-def uses_systemd():
-	# First check if systemctl is an available command, then check if systemd is the init system
-	return shutil.which("systemctl") is not None and os.path.exists("/run/systemd/system/")
+def install_docker_direct(args, config_dir):
+	runtime = "podman" if shutil.which("podman") else "docker"
+	print(f"Deploying Periphery container via {runtime}...")
+	os.system(f"{runtime} rm -f komodo-periphery 2>/dev/null || true")
+	
+	keys_dir = f"{config_dir}/keys"
+	onboard_env = f'-e PERIPHERY_ONBOARDING_KEY="{args.onboarding_key}" \\' if args.onboarding_key else ""
+	sock = "/run/podman/podman.sock" if runtime == "podman" and os.path.exists("/run/podman/podman.sock") else "/var/run/docker.sock"
+	
+	cmd = f'''{runtime} run -d \\
+		--name komodo-periphery \\
+		--network host \\
+		--restart unless-stopped \\
+		-e PERIPHERY_CORE_ADDRESS="{args.core_address}" \\
+		-e PERIPHERY_CONNECT_AS="{args.connect_as}" \\
+		{onboard_env}
+		-e PERIPHERY_STATS_POLLING_RATE="{args.polling_rate}" \\
+		-e PERIPHERY_INCLUDE_DISK_MOUNTS="{config_dir},/host,/" \\
+		-v {sock}:/var/run/docker.sock:ro \\
+		-v /proc:/proc:ro \\
+		-v {keys_dir}:/config/keys \\
+		-v {config_dir}:{config_dir} \\
+		{DOCKER_IMAGE}'''
+	
+	res = os.system(cmd)
+	if res == 0:
+		print(f"Periphery container deployed and running via {runtime}.")
+	else:
+		print(f"Failed to launch Periphery container with {runtime}.")
+
+def do_uninstall(args, init_sys, config_dir, service_dir):
+	print("Uninstalling Komodo Periphery...")
+	if init_sys == "systemd":
+		user = " --user" if args.user else ""
+		os.system(f"systemctl{user} stop periphery 2>/dev/null || true")
+		os.system(f"systemctl{user} disable periphery 2>/dev/null || true")
+		svc = f"{service_dir}/periphery.service"
+		if os.path.exists(svc):
+			os.remove(svc)
+		os.system(f"systemctl{user} daemon-reload 2>/dev/null || true")
+	elif init_sys == "openrc":
+		os.system("rc-service periphery stop 2>/dev/null || true")
+		os.system("rc-update del periphery default 2>/dev/null || true")
+		if os.path.exists("/etc/init.d/periphery"):
+			os.remove("/etc/init.d/periphery")
+	
+	if shutil.which("docker"):
+		os.system("docker rm -f komodo-periphery 2>/dev/null || true")
+	if shutil.which("podman"):
+		os.system("podman rm -f komodo-periphery 2>/dev/null || true")
+	
+	bin_path = "/usr/local/bin/periphery"
+	if os.path.exists(bin_path):
+		os.remove(bin_path)
+
+	print("Komodo Periphery uninstalled successfully.")
+	sys.exit(0)
 
 def main():
 	args = parse_args()
+	init_sys = detect_init()
 
-	print("=====================")
-	print(" PERIPHERY INSTALLER ")
-	print("=====================")
+	print("=========================================")
+	print("       KOMODO PERIPHERY INSTALLER        ")
+	print(f" Detected Init/Runtime: {init_sys.upper()} ")
+	print("=========================================")
 
-	if not uses_systemd():
-		print("This installer requires systemd and systemd wasn't found. Exiting")
+	[home_dir, bin_dir, config_dir, service_dir] = load_paths(args, init_sys)
+
+	if args.uninstall:
+		do_uninstall(args, init_sys, config_dir, service_dir)
+
+	if args.status:
+		print("=== Service Status ===")
+		if init_sys == "systemd":
+			user = " --user" if args.user else ""
+			os.system(f"systemctl{user} status periphery")
+		elif init_sys == "openrc":
+			os.system("rc-service periphery status")
+		if shutil.which("docker"):
+			os.system("docker ps -f name=komodo-periphery")
+		if shutil.which("podman"):
+			os.system("podman ps -f name=komodo-periphery")
+		sys.exit(0)
+
+	if not args.core_address:
+		print("Error: --core-address is required (e.g. ws://192.168.31.100:9120)")
 		sys.exit(1)
 
-	[home_dir, bin_dir, config_dir, service_dir] = load_paths(args)
-	
-	print(f'version: {args.version}')
-	print(f'core address: {args.core_address}')
-	if args.core_public_keys:
-		print(f'core public keys: {args.core_public_keys}')
-	
-	print(f'connect as: {args.connect_as}')
-	print(f'user install: {args.user}')
-	print(f'home dir: {home_dir}')
-	print(f'bin dir: {bin_dir}')
-	print(f'config dir: {config_dir}')
-	print(f'service file dir: {service_dir}')
+	if args.reinstall:
+		keys_dir = f"{config_dir}/keys"
+		if os.path.isdir(keys_dir):
+			print(f"Purging keys in {keys_dir} for fresh reinstall...")
+			shutil.rmtree(keys_dir, ignore_errors=True)
 
-	download_binary(args, bin_dir)
 	write_config(args, home_dir, config_dir)
-	write_service_file(args, home_dir, bin_dir, config_dir, service_dir)
 
-	user = ""
-	if args.user:
-		user = " --user"
+	# Alpine Linux / musl or Container requested
+	if args.container or is_alpine() or init_sys not in ["systemd"]:
+		if shutil.which("docker") or shutil.which("podman"):
+			if init_sys == "openrc":
+				install_openrc_service(args, config_dir, use_docker=True)
+			else:
+				install_docker_direct(args, config_dir)
+		else:
+			if is_alpine():
+				print("Error: Alpine Linux uses musl libc and requires Docker or Podman to run the Periphery agent.")
+				print("Please ensure Docker or Podman is installed and running on the host.")
+				sys.exit(1)
+			else:
+				print("Error: Unsupported init system and neither Docker nor Podman was found.")
+				sys.exit(1)
+	else:
+		# Standard systemd native installation
+		# Stop existing instance if running
+		user = " --user" if args.user else ""
+		os.system(f'systemctl{user} stop periphery 2>/dev/null || true')
 
-	print("Starting Periphery...")
-	print(os.popen(f'systemctl{user} start periphery').read())
+		arch = platform.machine().lower()
+		periphery_bin = "periphery-aarch64" if arch in ["aarch64", "arm64"] else "periphery-x86_64"
+		bin_path = f"{bin_dir}/periphery"
+		os.makedirs(bin_dir, exist_ok=True)
 
-	print("Finished Periphery setup.\n")
-	print(f'Note. Use "systemctl{user} status periphery" to make sure Periphery is running')
-	print(f'Note. Use "systemctl{user} enable periphery" to have Periphery start on system boot')
-	if args.user:
-		print(f'Note. Use "sudo loginctl enable-linger $USER" to make sure Periphery keeps runnning after user logs out')
+		download_url = f"{args.binary_url}/v1.17.2/{periphery_bin}"
+		print(f"Downloading Periphery binary for {arch} from {download_url}...")
+		dl_res = os.system(f"curl -fsSL {download_url} -o {bin_path} || wget -qO {bin_path} {download_url}")
+		if dl_res != 0 or not os.path.exists(bin_path) or os.path.getsize(bin_path) == 0:
+			# Fallback to docker container if binary download fails
+			if shutil.which("docker") or shutil.which("podman"):
+				print("Native binary download failed. Falling back to container runtime...")
+				install_docker_direct(args, config_dir)
+				sys.exit(0)
+			print("Error: Failed to download periphery binary.")
+			sys.exit(1)
+		
+		os.chmod(bin_path, 0o755)
+		install_systemd_service(args, home_dir, bin_dir, config_dir, service_dir)
 
-main()
+	print("\nSetup finished successfully!")
+	print(f"Node '{args.connect_as}' configured to connect to '{args.core_address}'.")
+
+if __name__ == "__main__":
+	main()

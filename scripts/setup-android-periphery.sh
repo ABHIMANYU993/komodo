@@ -1,6 +1,6 @@
 #!/system/bin/sh
-# Komodo Android Periphery Installer
-# Canonical one-command installer for rooted Android (Magisk)
+# Komodo Android Periphery Installer & Lifecycle Manager
+# Canonical one-command installer for rooted Android (Magisk / KernelSU / APatch)
 # Repository: https://github.com/ABHIMANYU993/komodo
 
 set -e
@@ -16,13 +16,24 @@ MODULE_ID="komodo-android-periphery"
 ACTIVE_MODDIR="/data/adb/modules/$MODULE_ID"
 UPDATE_MODDIR="/data/adb/modules_update/$MODULE_ID"
 
+# Expand PATH early to locate Magisk, KernelSU, APatch, and system utilities
+for p in /data/adb/magisk /data/adb/ksu/bin /data/adb/ap/bin /sbin /system/bin /system/xbin /debug_ramdisk /system/bin/.magisk; do
+    if [ -d "$p" ]; then
+        case ":$PATH:" in
+            *:"$p":*) ;;
+            *) PATH="$PATH:$p" ;;
+        esac
+    fi
+done
+export PATH
+
 # ANSI Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 BOLD='\033[1m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 log_info() {
     printf "${BLUE}%s${NC}\n" "$1"
@@ -42,35 +53,65 @@ log_err() {
 
 print_help() {
     cat <<EOF
-Komodo Android Periphery Installer
+Komodo Android Periphery Installer & Lifecycle Manager
 
 Usage:
-  setup-android-periphery.sh [OPTIONS]
+  setup-android-periphery.sh [ACTION] [OPTIONS]
 
-Required Options:
-  --core-address=<url>     WebSocket URL of Komodo Core (e.g. ws://192.168.31.80:9120)
-  --onboarding-key=<key>   One-time onboarding token (required for initial registration)
+Actions:
+  --install                 Install or configure Android Periphery (default)
+  --reinstall               Fresh reinstall: wipe keys and re-onboard
+  --reconfig                Update configuration (Core address, node name) and restart
+  --update, --upgrade       Download and install latest module version
+  --restart                 Restart running daemon process
+  --status                  Show current daemon running status and config
+  --uninstall               Uninstall Magisk module and stop daemon
+  --purge                   Used with --uninstall to also delete all keys and configs
+
+Required Options (for install / reconfig):
+  --core-address=<url>      WebSocket URL of Komodo Core (e.g. ws://192.168.31.100:9120)
+  --onboarding-key=<key>    One-time onboarding token (required for initial registration)
 
 Optional Parameters:
-  --connect-as=<name>      Server identifier name (defaults to device hostname)
-  --version=<version>      Specify release version (e.g. v0.1.0, defaults to latest)
-  --artifact-url=<url>     Direct URL to prebuilt komodo-android-periphery.zip
-  --artifact-file=<path>   Local path to prebuilt komodo-android-periphery.zip
-  --polling-rate=<rate>    Telemetry polling interval (e.g. 1-sec, 2-sec, default: 1-sec)
-  --non-interactive        Disable interactive prompts (e.g. reboot prompt)
-  --verbose                Enable detailed logging
-  --force                  Reinstall even if already installed and healthy
-  -h, --help               Show this help message
+  --connect-as=<name>       Server identifier name (defaults to device hostname)
+  --version=<version>       Specify release version (e.g. v2.4.0, defaults to latest)
+  --artifact-url=<url>      Direct URL to prebuilt komodo-android-periphery.zip
+  --artifact-file=<path>    Local path to prebuilt komodo-android-periphery.zip
+  --polling-rate=<rate>     Telemetry polling interval (e.g. 1-sec, 2-sec, default: 1-sec)
+  --non-interactive         Disable interactive prompts
+  --verbose                 Enable detailed logging
+  --force                   Bypass confirmation prompts and force execution
+  -h, --help                Show this help message
 
-Example:
+Examples:
+  # Initial Install / Connection via curl:
   curl -fsSL https://raw.githubusercontent.com/ABHIMANYU993/komodo/main/scripts/setup-android-periphery.sh | sh -s -- \\
-    --core-address="ws://192.168.31.80:9120" \\
-    --connect-as="\$(hostname)" \\
+    --core-address="ws://192.168.31.100:9120" \\
+    --connect-as="Redmi_Note_7_Pro" \\
     --onboarding-key="YOUR_ONBOARDING_KEY"
+
+  # Initial Install / Connection via wget:
+  wget -qO- https://raw.githubusercontent.com/ABHIMANYU993/komodo/main/scripts/setup-android-periphery.sh | sh -s -- \\
+    --core-address="ws://192.168.31.100:9120" \\
+    --connect-as="Realme_7_Pro" \\
+    --onboarding-key="YOUR_ONBOARDING_KEY"
+
+  # Fresh Reinstall (reset keys):
+  sh setup-android-periphery.sh --reinstall \\
+    --core-address="ws://192.168.31.100:9120" \\
+    --connect-as="Redmi_Note_7_Pro" \\
+    --onboarding-key="YOUR_NEW_KEY"
+
+  # Check Status:
+  sh setup-android-periphery.sh --status
+
+  # Clean Uninstall:
+  sh setup-android-periphery.sh --uninstall --purge
 EOF
 }
 
 # Parse Arguments
+ACTION="install"
 CORE_ADDRESS=""
 CONNECT_AS=""
 ONBOARDING_KEY=""
@@ -80,28 +121,53 @@ ARTIFACT_FILE=""
 NON_INTERACTIVE=0
 VERBOSE=0
 FORCE=0
+PURGE=0
 POLLING_RATE="1-sec"
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --core-address=*)
+        --install)
+            ACTION="install"
+            ;;
+        --reinstall)
+            ACTION="reinstall"
+            ;;
+        --reconfig|--update-config)
+            ACTION="reconfig"
+            ;;
+        --update|--upgrade)
+            ACTION="update"
+            ;;
+        --restart)
+            ACTION="restart"
+            ;;
+        --status)
+            ACTION="status"
+            ;;
+        --uninstall)
+            ACTION="uninstall"
+            ;;
+        --purge)
+            PURGE=1
+            ;;
+        --core-address=*|--core=*)
             CORE_ADDRESS="${1#*=}"
             ;;
-        --core-address)
+        --core-address|--core)
             CORE_ADDRESS="$2"
             shift
             ;;
-        --connect-as=*)
+        --connect-as=*|--name=*)
             CONNECT_AS="${1#*=}"
             ;;
-        --connect-as)
+        --connect-as|--name)
             CONNECT_AS="$2"
             shift
             ;;
-        --onboarding-key=*)
+        --onboarding-key=*|--token=*)
             ONBOARDING_KEY="${1#*=}"
             ;;
-        --onboarding-key)
+        --onboarding-key|--token)
             ONBOARDING_KEY="$2"
             shift
             ;;
@@ -155,22 +221,24 @@ while [ $# -gt 0 ]; do
     shift
 done
 
-# Check Root Escalation (Task 6)
+# Root Escalation Check
 CURRENT_UID=$(id -u 2>/dev/null || echo 1)
 if [ "$CURRENT_UID" -ne 0 ]; then
-    log_warn "Current process is not root (UID $CURRENT_UID). Escalating via su..."
-    # If script was piped through stdin, write it out to temp location for su execution
-    TMP_SCRIPT="/data/local/tmp/komodo_installer_run.sh"
-    if [ -f "$0" ] && [ "$0" != "sh" ] && [ "$0" != "/system/bin/sh" ]; then
-        SU_EXEC="$0"
+    log_warn "Current process is not root (UID $CURRENT_UID). Attempting escalation via su..."
+    if command -v su >/dev/null 2>&1; then
+        TMP_SCRIPT="/data/local/tmp/komodo_installer_run.sh"
+        if [ -f "$0" ] && [ "$0" != "sh" ] && [ "$0" != "/system/bin/sh" ] && [ "$0" != "bash" ]; then
+            SU_EXEC="$0"
+        else
+            cat > "$TMP_SCRIPT"
+            chmod 700 "$TMP_SCRIPT"
+            SU_EXEC="$TMP_SCRIPT"
+        fi
+        exec su -c "$SU_EXEC" "$@"
     else
-        cat > "$TMP_SCRIPT"
-        chmod 700 "$TMP_SCRIPT"
-        SU_EXEC="$TMP_SCRIPT"
+        log_err "Error: Root access is required. 'su' command not found."
+        exit 1
     fi
-
-    # Pass all arguments to su
-    exec su -c "$SU_EXEC" "$@"
 fi
 
 # Cleanup on exit
@@ -188,7 +256,7 @@ SDK_VER=$(getprop ro.build.version.sdk 2>/dev/null || echo "0")
 OS_REL=$(getprop ro.build.version.release 2>/dev/null || echo "unknown")
 CPU_ABI=$(getprop ro.product.cpu.abi 2>/dev/null || uname -m 2>/dev/null || echo "unknown")
 
-if [ "$SDK_VER" -eq 0 ] && [ ! -f /system/bin/linker64 ]; then
+if [ "$SDK_VER" -eq 0 ] && [ ! -f /system/bin/linker64 ] && [ ! -d /system ]; then
     log_err "Error: This installer is intended strictly for Android systems."
     exit 1
 fi
@@ -204,75 +272,334 @@ case "$CPU_ABI" in
 esac
 [ $VERBOSE -eq 1 ] && echo "Android Release: $OS_REL (API $SDK_VER)"
 
-# Stage 2: Checking Root and Magisk Availability
-log_info "[2/8] Checking root and Magisk availability..."
-if ! command -v magisk >/dev/null 2>&1; then
-    log_err "Error: Magisk not found in PATH. A rooted Android system with Magisk is required."
-    exit 1
+# Stage 2: Checking Root and Magisk/KernelSU/APatch
+log_info "[2/8] Checking root and module manager availability..."
+MAGISK_BIN=""
+if command -v magisk >/dev/null 2>&1; then
+    MAGISK_BIN="magisk"
+else
+    for candidate in /data/adb/magisk/magisk /sbin/magisk /system/bin/magisk /system/xbin/magisk /debug_ramdisk/magisk /system/bin/.magisk; do
+        if [ -x "$candidate" ]; then
+            MAGISK_BIN="$candidate"
+            break
+        fi
+    done
 fi
-MAGISK_VER=$(magisk -v 2>/dev/null || echo "Unknown")
-[ $VERBOSE -eq 1 ] && echo "Magisk Version: $MAGISK_VER"
 
-if [ ! -d "/data/adb" ]; then
-    log_err "Error: /data/adb directory not found. Magisk environment corrupted or inaccessible."
-    exit 1
+ROOT_PROVIDER="Generic Root"
+if [ -n "$MAGISK_BIN" ]; then
+    MAGISK_VER=$("$MAGISK_BIN" -v 2>/dev/null || echo "detected")
+    ROOT_PROVIDER="Magisk ($MAGISK_VER)"
+elif command -v ksud >/dev/null 2>&1; then
+    ROOT_PROVIDER="KernelSU ($(ksud -V 2>/dev/null || echo "detected"))"
+elif command -v apd >/dev/null 2>&1; then
+    ROOT_PROVIDER="APatch ($(apd -V 2>/dev/null || echo "detected"))"
+elif [ -d "/data/adb/modules" ]; then
+    ROOT_PROVIDER="Magisk/KernelSU compatible (/data/adb/modules)"
+else
+    # Create /data/adb/modules directory if root is active
+    mkdir -p /data/adb/modules
+    ROOT_PROVIDER="Android Root Directory (/data/adb)"
+fi
+log_success "Root provider verified: $ROOT_PROVIDER"
+
+# Helper: stop all running daemon instances
+stop_daemon() {
+    log_info "Stopping running periphery daemon instances..."
+    for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) \
+               $(pgrep -x "komodo-android-" 2>/dev/null || true) \
+               $(pgrep -f "komodo-android-periphery" 2>/dev/null || true); do
+        if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
+            kill -TERM "$pid" 2>/dev/null || true
+        fi
+    done
+    sleep 1
+}
+
+# ACTION: Status
+if [ "$ACTION" = "status" ]; then
+    log_info "=== Komodo Android Periphery Status ==="
+    echo "Module directory: $ACTIVE_MODDIR"
+    if [ -f "$ACTIVE_MODDIR/module.prop" ]; then
+        cat "$ACTIVE_MODDIR/module.prop"
+    else
+        echo "Module: NOT INSTALLED"
+    fi
+    echo ""
+    echo "Config file: $CONFIG_FILE"
+    if [ -f "$CONFIG_FILE" ]; then
+        cat "$CONFIG_FILE"
+    else
+        echo "Config: NOT FOUND"
+    fi
+    echo ""
+    RUNNING_PID=$(pgrep -f "komodo-android-periphery" 2>/dev/null || true)
+    if [ -n "$RUNNING_PID" ]; then
+        log_success "Daemon: RUNNING (PID: $RUNNING_PID)"
+    else
+        log_warn "Daemon: STOPPED"
+    fi
+    if [ -f "$KEYS_DIR/periphery.pub" ]; then
+        echo "Public Key: $(cat "$KEYS_DIR/periphery.pub" 2>/dev/null)"
+    fi
+    exit 0
+fi
+
+# ACTION: Uninstall
+if [ "$ACTION" = "uninstall" ]; then
+    log_info "Uninstalling Komodo Android Periphery..."
+    stop_daemon
+    rm -rf "$ACTIVE_MODDIR" "$UPDATE_MODDIR" 2>/dev/null || true
+    if [ "$PURGE" -eq 1 ]; then
+        rm -rf "$KOMODO_DIR" 2>/dev/null || true
+        log_success "Uninstalled successfully. All configuration and keys purged."
+    else
+        log_success "Module removed. Configuration and keys preserved in $KOMODO_DIR (use --purge to delete)."
+    fi
+    exit 0
+fi
+
+# ACTION: Restart
+if [ "$ACTION" = "restart" ]; then
+    stop_daemon
+    if [ -x "$ACTIVE_MODDIR/komodo-android-periphery" ]; then
+        TARGET_BIN="$ACTIVE_MODDIR/komodo-android-periphery"
+    elif [ -x "$UPDATE_MODDIR/komodo-android-periphery" ]; then
+        TARGET_BIN="$UPDATE_MODDIR/komodo-android-periphery"
+    else
+        log_err "Daemon binary not found."
+        exit 1
+    fi
+    (
+        while true; do
+            if [ -x "$TARGET_BIN" ] && [ -f "$CONFIG_FILE" ]; then
+                "$TARGET_BIN" --config "$CONFIG_FILE" >> "$LOG_FILE" 2>&1
+            fi
+            sleep 5
+        done
+    ) &
+    log_success "Periphery daemon restarted."
+    exit 0
+fi
+
+# Inspect Existing Installation
+EXISTING_INSTALLED=0
+EXISTING_CORE=""
+EXISTING_NAME=""
+if [ -d "$ACTIVE_MODDIR" ] || [ -f "$CONFIG_FILE" ]; then
+    EXISTING_INSTALLED=1
+    if [ -f "$CONFIG_FILE" ]; then
+        EXISTING_CORE=$(grep '^core_url' "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' "' || true)
+        EXISTING_NAME=$(grep '^connect_as' "$CONFIG_FILE" 2>/dev/null | cut -d'=' -f2 | tr -d ' "' || true)
+    fi
+fi
+
+# Interactive Menu for existing installations (when no explicit action/args passed in terminal)
+if [ $EXISTING_INSTALLED -eq 1 ] && [ $NON_INTERACTIVE -eq 0 ] && [ -t 0 ] && [ "$ACTION" = "install" ] && [ -z "$CORE_ADDRESS" ] && [ $FORCE -eq 0 ]; then
+    INSTALLED_VER=$(grep '^version=' "$ACTIVE_MODDIR/module.prop" 2>/dev/null | cut -d'=' -f2 || echo "unknown")
+    printf "\n${BOLD}==========================================================\n"
+    printf "  Existing Komodo Android Periphery Detected\n"
+    printf "  Installed Version: v%s | Node: '%s'\n" "$INSTALLED_VER" "$EXISTING_NAME"
+    printf "  Current Core URL:  %s\n" "$EXISTING_CORE"
+    printf "==========================================================${NC}\n"
+    printf "Select an operation:\n"
+    printf "  1) Reconfigure Core address & re-register with new Core\n"
+    printf "  2) Fresh Reinstall (reset keys and re-onboard)\n"
+    printf "  3) Upgrade / Update to latest version\n"
+    printf "  4) Restart Periphery daemon\n"
+    printf "  5) Uninstall Komodo Android Periphery\n"
+    printf "  6) Exit\n"
+    printf "Choice [1-6]: "
+    read -r CHOICE || CHOICE="6"
+    case "$CHOICE" in
+        1)
+            ACTION="reconfig"
+            printf "Enter new Komodo Core address (e.g. ws://192.168.31.100:9120): "
+            read -r CORE_ADDRESS
+            printf "Enter Onboarding Key (leave empty to reuse existing keys): "
+            read -r ONBOARDING_KEY
+            printf "Enter Server name (default '%s'): " "$EXISTING_NAME"
+            read -r CONNECT_AS
+            ;;
+        2)
+            ACTION="reinstall"
+            printf "Enter Komodo Core address (e.g. ws://192.168.31.100:9120): "
+            read -r CORE_ADDRESS
+            printf "Enter Onboarding Key: "
+            read -r ONBOARDING_KEY
+            ;;
+        3)
+            ACTION="update"
+            ;;
+        4)
+            ACTION="restart"
+            ;;
+        5)
+            ACTION="uninstall"
+            ;;
+        *)
+            echo "Operation cancelled."
+            exit 0
+            ;;
+    esac
+fi
+
+# Non-interactive intelligent detection:
+# If user provided a new core-address or onboarding key, automatically reconfigure or reinstall!
+if [ $EXISTING_INSTALLED -eq 1 ] && [ "$ACTION" = "install" ] && [ $FORCE -eq 0 ]; then
+    CONFIG_CHANGED=0
+    if [ -n "$CORE_ADDRESS" ] && [ "$CORE_ADDRESS" != "$EXISTING_CORE" ]; then
+        CONFIG_CHANGED=1
+    fi
+    if [ -n "$CONNECT_AS" ] && [ "$CONNECT_AS" != "$EXISTING_NAME" ]; then
+        CONFIG_CHANGED=1
+    fi
+    if [ -n "$ONBOARDING_KEY" ]; then
+        CONFIG_CHANGED=1
+    fi
+
+    if [ $CONFIG_CHANGED -eq 1 ]; then
+        log_info "Configuration change or new onboarding key detected. Reconfiguring node..."
+        ACTION="reconfig"
+    else
+        INSTALLED_VER=$(grep '^version=' "$ACTIVE_MODDIR/module.prop" 2>/dev/null | cut -d'=' -f2 || echo "")
+        if pgrep -f "komodo-android-periphery" >/dev/null 2>&1 && [ -f "$KEYS_DIR/periphery.key" ]; then
+            log_success "=========================================================="
+            log_success "  ALREADY RUNNING & HEALTHY"
+            log_success "  Node '$EXISTING_NAME' is active on Core '$EXISTING_CORE'."
+            log_success "  Version: $INSTALLED_VER"
+            log_success "  (To point to a different Core, provide --core-address or use --reinstall)"
+            log_success "=========================================================="
+            exit 0
+        fi
+    fi
 fi
 
 # Resolve defaults
 if [ -z "$CONNECT_AS" ]; then
-    CONNECT_AS="$(hostname 2>/dev/null || getprop net.hostname 2>/dev/null || echo "android-node")"
-fi
-
-# Validation
-if [ -z "$CORE_ADDRESS" ]; then
-    log_err "Error: Missing required parameter --core-address."
-    print_help
-    exit 1
-fi
-
-# Check Idempotency (Task 11)
-IS_UPGRADE=0
-if [ -d "$ACTIVE_MODDIR" ] && [ $FORCE -eq 0 ]; then
-    INSTALLED_VER=$(grep '^version=' "$ACTIVE_MODDIR/module.prop" 2>/dev/null | cut -d'=' -f2 || echo "")
-    if pgrep -f "komodo-android-periphery" >/dev/null 2>&1; then
-        if [ "$INSTALLED_VER" = "$VERSION" ] || [ "$VERSION" = "latest" ]; then
-            # Verify if keys exist and daemon is healthy
-            if [ -f "$KEYS_DIR/periphery.key" ]; then
-                log_success "=========================================================="
-                log_success "  ALREADY INSTALLED / HEALTHY"
-                log_success "  Node '$CONNECT_AS' is running and registered."
-                log_success "  Module Version: $INSTALLED_VER"
-                log_success "=========================================================="
-                exit 0
-            fi
-        fi
+    if [ -n "$EXISTING_NAME" ]; then
+        CONNECT_AS="$EXISTING_NAME"
+    else
+        CONNECT_AS="$(hostname 2>/dev/null || getprop net.hostname 2>/dev/null || echo "android-node")"
     fi
-    IS_UPGRADE=1
-    log_info "Existing installation detected (v$INSTALLED_VER). Proceeding with upgrade..."
 fi
 
-# On fresh install, onboarding key is strictly required
-if [ ! -f "$KEYS_DIR/periphery.key" ] && [ -z "$ONBOARDING_KEY" ]; then
-    log_err "Error: Missing required parameter --onboarding-key for initial device onboarding."
-    exit 1
+if [ -z "$CORE_ADDRESS" ]; then
+    if [ -n "$EXISTING_CORE" ]; then
+        CORE_ADDRESS="$EXISTING_CORE"
+    else
+        log_err "Error: Missing required parameter --core-address."
+        print_help
+        exit 1
+    fi
 fi
 
-# Stage 3: Downloading Release Artifact (Task 8 / User Correction 3)
+# Format core address to ws:// or wss:// if provided as http
+case "$CORE_ADDRESS" in
+    http://*)
+        CORE_ADDRESS="ws://${CORE_ADDRESS#http://}"
+        ;;
+    https://*)
+        CORE_ADDRESS="wss://${CORE_ADDRESS#https://}"
+        ;;
+    ws://*|wss://*)
+        ;;
+    *)
+        CORE_ADDRESS="ws://${CORE_ADDRESS}"
+        ;;
+esac
+
+# Fresh reinstall resets keys
+if [ "$ACTION" = "reinstall" ]; then
+    log_warn "Fresh reinstall requested. Purging previous authentication keys..."
+    rm -rf "$KEYS_DIR"/* 2>/dev/null || true
+    if [ -z "$ONBOARDING_KEY" ]; then
+        log_err "Error: --onboarding-key is required for a fresh reinstall."
+        exit 1
+    fi
+fi
+
+# If onboarding key provided during reconfig, clear old keys to force zero-trust onboarding
+if [ -n "$ONBOARDING_KEY" ]; then
+    rm -rf "$KEYS_DIR"/* 2>/dev/null || true
+fi
+
+# Normalize polling rate
+case "$POLLING_RATE" in
+    [0-9]*)
+        if ! echo "$POLLING_RATE" | grep -q -- "-sec"; then
+            POLLING_RATE="${POLLING_RATE}-sec"
+        fi
+        ;;
+esac
+
+# Stage: Write Config
+write_config_file() {
+    mkdir -p "$KOMODO_DIR" "$KEYS_DIR" "$KOMODO_DIR/logs" "$KOMODO_DIR/backups"
+    chmod 700 "$KOMODO_DIR" "$KEYS_DIR" "$KOMODO_DIR/logs" "$KOMODO_DIR/backups"
+
+    cat > "$CONFIG_FILE" <<EOF
+core_url = "$CORE_ADDRESS"
+connect_as = "$CONNECT_AS"
+log_level = "info"
+keys_dir = "$KEYS_DIR"
+stats_polling_rate = "$POLLING_RATE"
+EOF
+    if [ -n "$ONBOARDING_KEY" ]; then
+        echo "onboarding_key = \"$ONBOARDING_KEY\"" >> "$CONFIG_FILE"
+    fi
+    chmod 600 "$CONFIG_FILE"
+}
+
+# If only reconfiguring, update config and restart daemon immediately
+if [ "$ACTION" = "reconfig" ] && [ -d "$ACTIVE_MODDIR" ]; then
+    log_info "Applying new configuration: Core = $CORE_ADDRESS, Node = $CONNECT_AS..."
+    write_config_file
+    stop_daemon
+
+    TARGET_BIN="$ACTIVE_MODDIR/komodo-android-periphery"
+    (
+        while true; do
+            if [ -x "$TARGET_BIN" ] && [ -f "$CONFIG_FILE" ]; then
+                echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] Starting komodo-android-periphery..." >> "$LOG_FILE"
+                "$TARGET_BIN" --config "$CONFIG_FILE" >> "$LOG_FILE" 2>&1
+                EXIT_CODE=$?
+                echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] Agent exited ($EXIT_CODE). Restarting in 5s..." >> "$LOG_FILE"
+            fi
+            sleep 5
+        done
+    ) &
+
+    log_info "Verifying connection to Komodo Core..."
+    CONNECTED=0
+    for i in $(seq 1 12); do
+        sleep 1
+        if grep -E "Authenticated successfully as|Entering message loop|Onboarding for.*completed successfully" "$LOG_FILE" 2>/dev/null | tail -n 5 >/dev/null 2>&1; then
+            CONNECTED=1
+            break
+        fi
+    done
+
+    if [ $CONNECTED -eq 1 ]; then
+        if [ -n "$ONBOARDING_KEY" ]; then
+            grep -v '^onboarding_key' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" 2>/dev/null && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+            chmod 600 "$CONFIG_FILE"
+        fi
+        log_success "=========================================================="
+        log_success "  SUCCESS: Reconfigured and connected!"
+        log_success "  Node '$CONNECT_AS' is now communicating with '$CORE_ADDRESS'."
+        log_success "=========================================================="
+    else
+        log_warn "Daemon restarted with new config. Awaiting WebSocket handshake..."
+        log_info "Check log: $LOG_FILE"
+    fi
+    exit 0
+fi
+
+# Stage 3: Downloading Release Artifact
 log_info "[3/8] Downloading release artifact..."
 ZIP_DEST="$TMP_DIR/komodo-android-periphery.zip"
 SHA_DEST="$TMP_DIR/komodo-android-periphery.zip.sha256"
-
-# Select downloader
-if command -v curl >/dev/null 2>&1; then
-    FETCH_CMD="curl -fsSL"
-elif command -v wget >/dev/null 2>&1; then
-    FETCH_CMD="wget -qO-"
-elif [ -x /data/adb/magisk/busybox ]; then
-    FETCH_CMD="/data/adb/magisk/busybox wget -qO-"
-else
-    log_err "Error: Neither curl nor wget was found on this device."
-    exit 1
-fi
 
 if [ -n "$ARTIFACT_FILE" ]; then
     if [ ! -f "$ARTIFACT_FILE" ]; then
@@ -281,9 +608,7 @@ if [ -n "$ARTIFACT_FILE" ]; then
     fi
     log_info "Using local artifact file: $ARTIFACT_FILE"
     cp "$ARTIFACT_FILE" "$ZIP_DEST"
-    if [ -f "${ARTIFACT_FILE}.sha256" ]; then
-        cp "${ARTIFACT_FILE}.sha256" "$SHA_DEST"
-    fi
+    [ -f "${ARTIFACT_FILE}.sha256" ] && cp "${ARTIFACT_FILE}.sha256" "$SHA_DEST"
 else
     if [ -n "$ARTIFACT_URL" ]; then
         ZIP_URL="$ARTIFACT_URL"
@@ -300,107 +625,71 @@ else
     if command -v curl >/dev/null 2>&1; then
         curl -fsSL "$ZIP_URL" -o "$ZIP_DEST"
         curl -fsSL "$SHA_URL" -o "$SHA_DEST" 2>/dev/null || true
-    else
+    elif command -v wget >/dev/null 2>&1; then
         wget -q "$ZIP_URL" -O "$ZIP_DEST"
         wget -q "$SHA_URL" -O "$SHA_DEST" 2>/dev/null || true
+    elif [ -x /data/adb/magisk/busybox ]; then
+        /data/adb/magisk/busybox wget -q "$ZIP_URL" -O "$ZIP_DEST"
+        /data/adb/magisk/busybox wget -q "$SHA_URL" -O "$SHA_DEST" 2>/dev/null || true
+    else
+        log_err "Error: Neither curl nor wget is available on this device."
+        exit 1
     fi
 fi
 
-# Stage 4: Verifying Artifact Integrity (Task 8)
+# Stage 4: Verifying Artifact Integrity
 log_info "[4/8] Verifying artifact integrity..."
 if [ ! -s "$ZIP_DEST" ]; then
     log_err "Error: Downloaded package is empty or failed to download."
     exit 1
 fi
 
-# Verify checksum if .sha256 was retrieved
 if [ -s "$SHA_DEST" ]; then
     EXPECTED_SHA=$(awk '{print $1}' "$SHA_DEST" | head -n 1)
-    ACTUAL_SHA=$(sha256sum "$ZIP_DEST" | awk '{print $1}')
-    if [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
-        log_err "Error: SHA-256 mismatch!"
-        log_err "Expected: $EXPECTED_SHA"
-        log_err "Actual:   $ACTUAL_SHA"
+    ACTUAL_SHA=$(sha256sum "$ZIP_DEST" 2>/dev/null | awk '{print $1}' || echo "")
+    if [ -n "$ACTUAL_SHA" ] && [ "$EXPECTED_SHA" != "$ACTUAL_SHA" ]; then
+        log_err "Error: SHA-256 mismatch! Expected: $EXPECTED_SHA, Got: $ACTUAL_SHA"
         exit 1
     fi
     [ $VERBOSE -eq 1 ] && echo "SHA-256 verified: $ACTUAL_SHA"
 fi
 
-# Verify ZIP archive structure
-if ! unzip -t "$ZIP_DEST" >/dev/null 2>&1; then
-    log_err "Error: Invalid or corrupted ZIP archive."
-    exit 1
-fi
+# Stage 5: Installing Magisk/KernelSU/APatch Module
+log_info "[5/8] Installing module package..."
+stop_daemon
 
-# Stage 5: Installing Magisk Module (User Correction 1)
-log_info "[5/8] Installing Magisk module via official CLI..."
-
-# If upgrading, backup state before touching installation
-if [ $IS_UPGRADE -eq 1 ]; then
-    BACKUP_DIR="$KOMODO_DIR/backups/backup_$(date +%Y%m%d_%H%M%S)"
-    mkdir -p "$BACKUP_DIR"
-    cp -a "$CONFIG_FILE" "$BACKUP_DIR/" 2>/dev/null || true
-    cp -a "$KEYS_DIR" "$BACKUP_DIR/" 2>/dev/null || true
-    cp -a "$ACTIVE_MODDIR/module.prop" "$BACKUP_DIR/" 2>/dev/null || true
-    log_info "Created rollback backup at $BACKUP_DIR"
-fi
-
-# Stop running daemon before updating module (avoid self-kill)
-for pid in $(pgrep -x "komodo-android-periphery" 2>/dev/null || true) $(pgrep -x "komodo-android-" 2>/dev/null || true) $(pgrep -f "/data/adb/modules.*/komodo-android-periphery" 2>/dev/null || true); do
-    if [ -n "$pid" ] && [ "$pid" != "$$" ]; then
-        kill -TERM "$pid" 2>/dev/null || true
+INSTALLED_OK=0
+if [ -n "$MAGISK_BIN" ]; then
+    if "$MAGISK_BIN" --install-module "$ZIP_DEST" 2>/dev/null; then
+        INSTALLED_OK=1
     fi
-done
-sleep 1
-
-# Supported Magisk installation command
-magisk --install-module "$ZIP_DEST"
-
-# Ensure persistent directory structure exists
-mkdir -p "$KOMODO_DIR" "$KEYS_DIR" "$KOMODO_DIR/logs" "$KOMODO_DIR/backups"
-chmod 700 "$KOMODO_DIR" "$KEYS_DIR" "$KOMODO_DIR/logs" "$KOMODO_DIR/backups"
-
-# Install helper utility for komodo-control
-mkdir -p "$KOMODO_DIR/bin"
-if [ -f "$ACTIVE_MODDIR/komodo-control" ]; then
-    cp "$ACTIVE_MODDIR/komodo-control" "$KOMODO_DIR/bin/komodo-control"
-    chmod 755 "$KOMODO_DIR/bin/komodo-control"
-elif [ -f "$UPDATE_MODDIR/komodo-control" ]; then
-    cp "$UPDATE_MODDIR/komodo-control" "$KOMODO_DIR/bin/komodo-control"
-    chmod 755 "$KOMODO_DIR/bin/komodo-control"
+elif command -v ksud >/dev/null 2>&1; then
+    if ksud module install "$ZIP_DEST" 2>/dev/null; then
+        INSTALLED_OK=1
+    fi
+elif command -v apd >/dev/null 2>&1; then
+    if apd module install "$ZIP_DEST" 2>/dev/null; then
+        INSTALLED_OK=1
+    fi
 fi
 
-# Stage 6: Configuring Periphery Service (Task 9, 10)
+# Universal Fallback: Extract directly to /data/adb/modules/$MODULE_ID
+if [ $INSTALLED_OK -eq 0 ]; then
+    log_info "Using direct module extraction fallback to $ACTIVE_MODDIR..."
+    mkdir -p "$ACTIVE_MODDIR"
+    unzip -o "$ZIP_DEST" -d "$ACTIVE_MODDIR" >/dev/null 2>&1 || {
+        log_err "Error: Failed to extract module package."
+        exit 1
+    }
+    chmod 755 "$ACTIVE_MODDIR"/*.sh "$ACTIVE_MODDIR/komodo-android-periphery" 2>/dev/null || true
+fi
+
+# Stage 6: Configuring Periphery Service
 log_info "[6/8] Configuring Periphery service..."
+write_config_file
 
-# Normalize polling rate to ensure format like "1-sec"
-case "$POLLING_RATE" in
-    [0-9]*)
-        if ! echo "$POLLING_RATE" | grep -q -- "-sec"; then
-            POLLING_RATE="${POLLING_RATE}-sec"
-        fi
-        ;;
-esac
-
-# Write secure config.toml (mode 0600)
-cat > "$CONFIG_FILE" <<EOF
-core_url = "$CORE_ADDRESS"
-connect_as = "$CONNECT_AS"
-log_level = "info"
-keys_dir = "$KEYS_DIR"
-stats_polling_rate = "$POLLING_RATE"
-EOF
-
-# Include onboarding key only if provided (initial onboarding)
-if [ -n "$ONBOARDING_KEY" ]; then
-    echo "onboarding_key = \"$ONBOARDING_KEY\"" >> "$CONFIG_FILE"
-fi
-chmod 600 "$CONFIG_FILE"
-
-# Stage 7: Starting Periphery Agent (Task 14, 15)
+# Stage 7: Starting Periphery Agent
 log_info "[7/8] Starting Periphery agent..."
-
-# Find daemon binary: check active module or staged update
 if [ -x "$ACTIVE_MODDIR/komodo-android-periphery" ]; then
     TARGET_BIN="$ACTIVE_MODDIR/komodo-android-periphery"
 elif [ -x "$UPDATE_MODDIR/komodo-android-periphery" ]; then
@@ -410,7 +699,6 @@ else
     exit 1
 fi
 
-# Start daemon supervisor in background
 (
     while true; do
         if [ -x "$TARGET_BIN" ] && [ -f "$CONFIG_FILE" ]; then
@@ -423,7 +711,7 @@ fi
     done
 ) &
 
-# Stage 8: Verifying Komodo Connection (User Correction 4)
+# Stage 8: Verifying Komodo Connection
 log_info "[8/8] Verifying Komodo connection..."
 CONNECTED=0
 COUNT=0
@@ -432,13 +720,6 @@ TIMEOUT=15
 while [ $COUNT -lt $TIMEOUT ]; do
     sleep 1
     COUNT=$((COUNT + 1))
-    
-    # Check if process is running
-    if ! pgrep -f "$TARGET_BIN" >/dev/null 2>&1; then
-        continue
-    fi
-
-    # Check daemon log for successful authentication / entering message loop
     if [ -f "$LOG_FILE" ]; then
         if grep -E "Authenticated successfully as|Entering message loop|Onboarding for.*completed successfully" "$LOG_FILE" >/dev/null 2>&1; then
             CONNECTED=1
@@ -448,53 +729,20 @@ while [ $COUNT -lt $TIMEOUT ]; do
 done
 
 if [ $CONNECTED -eq 1 ]; then
-    # Onboarding secret sanitation (Task 10 / User Correction 6)
     if [ -n "$ONBOARDING_KEY" ] && [ -f "$CONFIG_FILE" ]; then
-        # Remove onboarding_key line safely
-        grep -v '^onboarding_key' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp"
-        mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
+        grep -v '^onboarding_key' "$CONFIG_FILE" > "${CONFIG_FILE}.tmp" 2>/dev/null && mv "${CONFIG_FILE}.tmp" "$CONFIG_FILE"
         chmod 600 "$CONFIG_FILE"
-        [ $VERBOSE -eq 1 ] && echo "Purged bootstrap onboarding secret from configuration."
     fi
-
     log_success "=========================================================="
     log_success "  SUCCESS: Android Periphery installed and connected!"
     log_success "  Node '$CONNECT_AS' is now communicating with Komodo Core."
     log_success "  Verify the Server shows OK in the Komodo UI."
     log_success "=========================================================="
 else
-    log_err "=========================================================="
-    log_err "  WARNING: Daemon started but connection not confirmed yet."
-    log_err "  Check log file: $LOG_FILE"
-    log_err "=========================================================="
-    if [ $IS_UPGRADE -eq 1 ] && [ -d "$BACKUP_DIR" ]; then
-        log_warn "Upgrade did not verify cleanly within timeout. Rollback available at $BACKUP_DIR."
-    fi
-fi
-
-# Reboot Prompt (User Correction 2)
-if [ $NON_INTERACTIVE -eq 0 ] && [ -t 0 ]; then
-    printf "\n${RED}${BOLD}============================================================\n"
-    printf "WARNING\n"
-    printf "The Android Periphery service will start automatically after\n"
-    printf "reboot.\n"
-    printf "Reboot is recommended to validate boot persistence.\n"
-    printf "Current SSH session will be disconnected by reboot.\n"
-    printf "Reboot now? [y/N]${NC}\n"
-    printf "${RED}${BOLD}============================================================${NC}\n"
-    printf "Selection (default N): "
-    read -r ANSWER || ANSWER="N"
-    case "$ANSWER" in
-        y*|Y*)
-            echo "Rebooting now. Reconnect over SSH after the device returns."
-            /system/bin/reboot 2>/dev/null || reboot
-            ;;
-        *)
-            echo "Module installed successfully. Reboot at your convenience to validate boot persistence."
-            ;;
-    esac
-else
-    echo "Module installed successfully. Reboot recommended for normal Magisk boot activation."
+    log_warn "=========================================================="
+    log_warn "  Daemon started. Awaiting connection handshake..."
+    log_warn "  Check log file: $LOG_FILE"
+    log_warn "=========================================================="
 fi
 
 exit 0
